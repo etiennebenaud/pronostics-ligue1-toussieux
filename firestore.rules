@@ -1,0 +1,31 @@
+// ============================================================
+// FIRESTORE SECURITY RULES
+// À copier dans Firebase Console > Firestore > Règles
+// ============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Journées : lecture publique, écriture uniquement si authentifié
+    // (On utilise une logique de code côté client — suffisant pour usage privé entre amis)
+    match /journees/{journeeId} {
+      allow read: if true;
+      allow write: if true;  // Simplification pour usage entre amis
+      // Pour renforcer : allow write: if request.auth != null;
+    }
+
+    // Bonus de fin de saison
+    match /bonus/{docId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Profils joueurs
+    match /profils/{joueurId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+  }
+}
