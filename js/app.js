@@ -106,10 +106,10 @@ async function demarrerApp() {
     banner.innerHTML = jo
       ? `<div class="user-avatar">${jo.emoji}</div>
          <div class="user-info"><div class="user-name">${jo.nom}</div><div class="user-team">${jo.equipe||''}</div></div>
-         <button class="btn-logout" onclick="deconnexion()">Déco</button>`
+         <button class="btn-logout" onclick="deconnexion()">Se déconnecter</button>`
       : `<div class="user-avatar">🔧</div>
          <div class="user-info"><div class="user-name">Administrateur</div><div class="user-team">Mode admin</div></div>
-         <button class="btn-logout" onclick="deconnexion()">Déco</button>`;
+         <button class="btn-logout" onclick="deconnexion()">Se déconnecter</button>`;
   }
   APP.journeeActive = CONFIG.regles.journeeDefaut > 0 ? CONFIG.regles.journeeDefaut : 1;
   const jBadge = document.getElementById('header-journee-badge');
