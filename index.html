@@ -72,13 +72,32 @@
 
     <!-- Navigation -->
     <nav class="nav-tabs" id="nav-tabs">
-      <button class="nav-tab active" data-tab="grille">🎯 Grille</button>
-      <button class="nav-tab" data-tab="resultats">📊 Résultats</button>
-      <button class="nav-tab" data-tab="classement">🏆 Classement</button>
-      <button class="nav-tab" data-tab="bonus">🎖️ Bonus</button>
-      <button class="nav-tab" data-tab="profil">👤 Profil</button>
-      <!-- Onglet Admin : visible uniquement pour l'admin -->
-      <button class="nav-tab" data-tab="admin" id="tab-admin-btn" style="display:none">⚙️ Admin</button>
+      <div class="nav-tabs-inner">
+        <button class="nav-tab active" data-tab="grille">
+          <span class="tab-icon">🎯</span>
+          <span class="tab-label">Grille</span>
+        </button>
+        <button class="nav-tab" data-tab="resultats">
+          <span class="tab-icon">📊</span>
+          <span class="tab-label">Résultats</span>
+        </button>
+        <button class="nav-tab" data-tab="classement">
+          <span class="tab-icon">🏆</span>
+          <span class="tab-label">Classement</span>
+        </button>
+        <button class="nav-tab" data-tab="bonus">
+          <span class="tab-icon">🎖️</span>
+          <span class="tab-label">Bonus</span>
+        </button>
+        <button class="nav-tab" data-tab="profil">
+          <span class="tab-icon">👤</span>
+          <span class="tab-label">Profil</span>
+        </button>
+        <button class="nav-tab" data-tab="admin" id="tab-admin-btn" style="display:none">
+          <span class="tab-icon">⚙️</span>
+          <span class="tab-label">Admin</span>
+        </button>
+      </div>
     </nav>
 
     <div id="tab-grille"     class="section tab-content active"></div>
