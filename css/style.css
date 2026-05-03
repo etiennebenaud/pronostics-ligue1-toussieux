@@ -449,15 +449,30 @@ body {
 
 /* ── Bonus fin de saison ──────────────────────────────────── */
 .bonus-grid {
-  display: grid; grid-template-columns: 1fr 1fr;
-  gap: 8px; margin-bottom: 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+  /* Évite le débordement sur mobile */
+  max-width: 100%;
+  box-sizing: border-box;
 }
-.bonus-input-group { display: flex; flex-direction: column; gap: 4px; }
+/* Une seule colonne sur très petits écrans */
+@media (max-width: 360px) {
+  .bonus-grid { grid-template-columns: 1fr; }
+}
+.bonus-input-group {
+  display: flex; flex-direction: column; gap: 4px;
+  min-width: 0; /* clé pour éviter le débordement dans une grille */
+}
 .bonus-input {
-  padding: 10px 12px;
+  padding: 9px 10px;
   border: 2px solid #E0E5EA; border-radius: 8px;
-  font-size: 14px; font-weight: 600; outline: none;
+  font-size: 13px; font-weight: 600; outline: none;
   transition: var(--transition);
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
 }
 .bonus-input:focus { border-color: var(--or); }
 
@@ -688,4 +703,14 @@ body {
 .nav-tab[style*="display:none"],
 .nav-tab[style*="display: none"] {
   display: none !important;
+}
+
+/* ── Select admin journée ────────────────────────────────── */
+#admin-select-journee:focus {
+  border-color: var(--orange) !important;
+  box-shadow: 0 0 0 3px rgba(232,80,10,0.15);
+}
+#admin-select-journee option {
+  font-size: 14px;
+  padding: 8px;
 }
