@@ -8,7 +8,7 @@ const CONFIG = {
 
   // ── Saison ──────────────────────────────────────────────
   saison: "2026/2027",
-  nbJournees: 38,
+  nbJournees: 34,
   nbMatchsParJournee: 9,
 
   // ── Votre compte (le premier joueur = vous) ──────────────
