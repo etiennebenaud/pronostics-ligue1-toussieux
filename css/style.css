@@ -627,7 +627,7 @@ body {
 }
 .nav-tab {
   flex: 1 1 0% !important;
-  display: flex !important;
+  display: flex !important;  /* écrasé par [style="display:none"] via règle spécifique */
   flex-direction: column !important;
   align-items: center !important;
   justify-content: center !important;
@@ -682,4 +682,10 @@ body {
   border-radius: 8px !important;
   padding: 6px 12px !important;
   white-space: nowrap !important;
+}
+
+/* ── Fix : onglet Admin caché pour les non-admins ───────── */
+.nav-tab[style*="display:none"],
+.nav-tab[style*="display: none"] {
+  display: none !important;
 }
