@@ -592,51 +592,6 @@ body {
 }
 .user-name, .user-team, .btn-logout { }
 
-/* ── Navigation B+C — curseur glissant avec icônes ─────── */
-.nav-tabs {
-  background: #0A1628 !important;
-  border-bottom: none !important;
-  padding: 8px 10px 10px !important;
-  overflow: visible !important;
-}
-.nav-tabs-inner {
-  display: flex;
-  background: rgba(255,255,255,0.08);
-  border-radius: 12px;
-  padding: 3px;
-  gap: 2px;
-}
-.nav-tab {
-  flex: 1;
-  display: flex !important;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  padding: 6px 2px !important;
-  border-radius: 9px !important;
-  border: none !important;
-  background: transparent !important;
-  color: rgba(255,255,255,0.4) !important;
-  font-size: 9px !important;
-  font-weight: 400 !important;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.2s, color 0.2s;
-  margin-bottom: 0 !important;
-}
-.nav-tab .tab-icon { font-size: 15px; line-height: 1; display: block; }
-.nav-tab .tab-label { display: block; }
-.nav-tab.active {
-  background: white !important;
-  color: #0A1628 !important;
-  font-weight: 500 !important;
-  border-bottom: none !important;
-}
-.nav-tab:hover:not(.active) {
-  background: rgba(255,255,255,0.1) !important;
-  color: rgba(255,255,255,0.7) !important;
-}
 
 /* ── Bannière utilisateur ────────────────────────────────── */
 .user-banner {
@@ -651,4 +606,80 @@ body {
   border: 0.5px solid rgba(255,255,255,0.12) !important;
   border-radius: 6px !important;
   padding: 5px 10px !important;
+}
+
+/* ── Navigation B+C — curseur glissant avec icônes ─────── */
+.nav-tabs {
+  background: #0A1628 !important;
+  border-bottom: none !important;
+  padding: 8px 12px 12px !important;
+  overflow: visible !important;
+  display: block !important;
+}
+.nav-tabs-inner {
+  display: flex;
+  width: 100%;
+  background: rgba(255,255,255,0.09);
+  border-radius: 14px;
+  padding: 4px;
+  gap: 3px;
+  box-sizing: border-box;
+}
+.nav-tab {
+  flex: 1 1 0% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 4px !important;
+  padding: 8px 2px !important;
+  border-radius: 10px !important;
+  border: none !important;
+  background: transparent !important;
+  color: rgba(255,255,255,0.45) !important;
+  font-size: 10px !important;
+  font-weight: 400 !important;
+  cursor: pointer;
+  white-space: nowrap;
+  min-width: 0 !important;
+  transition: background 0.18s, color 0.18s;
+  margin-bottom: 0 !important;
+  line-height: 1 !important;
+}
+.nav-tab .tab-icon {
+  font-size: 18px !important;
+  line-height: 1;
+  display: block;
+}
+.nav-tab .tab-label {
+  display: block;
+  font-size: 10px;
+  line-height: 1;
+}
+.nav-tab.active {
+  background: white !important;
+  color: #0A1628 !important;
+  font-weight: 600 !important;
+  border-bottom: none !important;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+}
+.nav-tab:hover:not(.active) {
+  background: rgba(255,255,255,0.12) !important;
+  color: rgba(255,255,255,0.75) !important;
+}
+
+/* ── Bannière utilisateur ────────────────────────────────── */
+.user-banner {
+  background: #122038 !important;
+  border-bottom: 1px solid rgba(255,255,255,0.06) !important;
+  padding: 10px 16px !important;
+}
+.btn-logout {
+  font-size: 11px !important;
+  color: rgba(255,255,255,0.6) !important;
+  background: rgba(255,255,255,0.08) !important;
+  border: 0.5px solid rgba(255,255,255,0.15) !important;
+  border-radius: 8px !important;
+  padding: 6px 12px !important;
+  white-space: nowrap !important;
 }
