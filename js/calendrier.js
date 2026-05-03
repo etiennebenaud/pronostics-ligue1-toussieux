@@ -9,6 +9,42 @@ let _saisonChargee = "";
 
 const SPORTSDB_LEAGUE = 4334; // Ligue 1
 
+// ── Récupérer les 18 équipes d'une saison depuis J1 ────────
+// J1 contient exactement les 18 équipes participantes
+async function fetchEquipesSaison(saisonKey) {
+  try {
+    const matchs = await fetchJourneeAPI(1, saisonKey.replace('-', '/'));
+    if (!matchs || matchs.length === 0) return [];
+    const equipes = [...new Set([
+      ...matchs.map(m => m.domicile),
+      ...matchs.map(m => m.exterieur),
+    ])].filter(Boolean).sort();
+    console.log(`Équipes ${saisonKey}:`, equipes);
+    return equipes;
+  } catch(e) {
+    console.error('fetchEquipesSaison:', e);
+    return [];
+  }
+}
+
+// ── Rafraîchir la liste des équipes (bouton admin) ───────────
+async function rafraichirEquipes() {
+  const saison = saisonApiFormat(CONFIG.saison);
+  const btn = document.getElementById('btn-refresh-equipes');
+  if (btn) { btn.textContent = '⏳ Chargement...'; btn.disabled = true; }
+  const equipes = await fetchEquipesSaison(saison);
+  if (equipes.length > 0) {
+    APP.equipesL1 = equipes;
+    showToast(`✅ ${equipes.length} équipes chargées pour ${CONFIG.saison}`, 'success');
+  } else {
+    showToast('Impossible de charger les équipes. Vérifiez la connexion.', 'error');
+  }
+  if (btn) { btn.textContent = '🔄 Rafraîchir les équipes'; btn.disabled = false; }
+  return equipes;
+}
+
+
+
 // Convertit "2026/2027" → "2026-2027" (format TheSportsDB)
 function saisonApiFormat(s) {
   return (s || CONFIG.saison).replace('/', '-');
@@ -86,7 +122,7 @@ async function ouvrirCalendrierAdmin() {
         <div>
           <label class="profil-label">Journées (ex: 1-38 ou 37-38)</label>
           <input class="profil-input" id="cal-range"
-            value={`1-${CONFIG.nbJournees}`} placeholder="Ex: 1-38">
+            value="1-34" placeholder="Ex: 1-38">
         </div>
       </div>
 
