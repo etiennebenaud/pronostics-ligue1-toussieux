@@ -157,43 +157,112 @@ document.querySelectorAll('.nav-tab').forEach(tab => tab.addEventListener('click
 
 // ── Admin ────────────────────────────────────────────────────
 function chargerAdmin() {
+  // Construire les options de la liste déroulante journées
+  const nbJ = CONFIG.nbJournees;
+  const optionsJournees = Array.from({length: nbJ}, (_, i) => {
+    const j = i + 1;
+    const isCourante = j === APP.journeeActive;
+    return `<option value="${j}" ${isCourante ? 'selected' : ''}>
+      Journée ${j}${isCourante ? ' (courante)' : ''}
+    </option>`;
+  }).join('');
+
   document.getElementById('tab-admin').innerHTML = `
-    <div style="padding:16px"><div class="card">
-      <div class="card-title">⚙️ Administration</div>
-      <button class="btn-primary" onclick="chargerAdminJoueurs()" style="margin-bottom:8px">
-        👥 Gérer les joueurs (${APP.joueurs.length} actif${APP.joueurs.length>1?'s':''})
-      </button>
-      <p class="text-sm text-muted" style="margin-bottom:16px">Ajouter, modifier, retirer. Aucune limite.</p>
-      <hr class="divider">
-      <button class="btn-primary" onclick="ouvrirCalendrierAdmin()" style="margin-bottom:8px">
-        📅 Charger le calendrier (TheSportsDB)
-      </button>
-      <p class="text-sm text-muted" style="margin-bottom:16px">
-        Scrape les matchs et les valide journée par journée.
-      </p>
-      <hr class="divider">
-      <button class="btn-primary" onclick="ouvrirAdminJournee()" style="margin-bottom:8px">
-        📅 Gérer la Journée ${APP.journeeActive}
-      </button>
-      <p class="text-sm text-muted" style="margin-bottom:16px">Deadline, scores réels.</p>
-      <hr class="divider">
-      <button class="btn-primary" onclick="confirmerClotureSaison()"
-        style="margin-bottom:8px;background:#C00000;width:100%">
-        🏁 Clôturer la saison ${CONFIG.saison}
-      </button>
-      <p class="text-sm text-muted" style="margin-bottom:16px">
-        Archive la saison et calcule le palmarès final.
-      </p>
-      <hr class="divider">
-            <div style="background:var(--color-background-tertiary);border-radius:8px;padding:12px;margin-top:8px">
-        <p style="font-size:12px;font-weight:500;color:var(--color-text-secondary);margin-bottom:8px">Joueurs actifs :</p>
-        <div style="display:flex;flex-wrap:wrap;gap:6px">
-          ${APP.joueurs.map(j=>`<span style="background:var(--color-background-secondary);padding:3px 10px;border-radius:12px;font-size:12px">${j.emoji} ${j.nom}</span>`).join('')
-            || '<span class="text-sm text-muted">Aucun — cliquez sur Gérer les joueurs</span>'}
+    <div style="padding:16px">
+
+      <!-- ── Journée ── -->
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title" style="margin-bottom:12px">📅 Gestion d'une journée</div>
+
+        <label class="profil-label">Sélectionner la journée</label>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+          <select id="admin-select-journee"
+            onchange="adminMettreAJourBoutonJournee()"
+            style="flex:1;padding:10px 12px;border:2px solid var(--color-border-primary);
+                   border-radius:10px;font-size:14px;font-weight:500;
+                   background:var(--color-background-primary);
+                   color:var(--color-text-primary);outline:none;cursor:pointer">
+            ${optionsJournees}
+          </select>
+          <button onclick="adminNaviguerVersJournee()"
+            style="background:var(--bleu-l);color:var(--bleu);border:none;
+                   border-radius:8px;padding:10px 12px;font-size:12px;
+                   font-weight:500;cursor:pointer;white-space:nowrap">
+            🎯 Aller à cette journée
+          </button>
         </div>
+
+        <button class="btn-primary" id="btn-gerer-journee"
+          onclick="adminOuvrirJourneeSelectionnee()"
+          style="width:100%;margin-bottom:4px">
+          ✏️ Gérer la Journée ${APP.journeeActive}
+        </button>
+        <p class="text-sm text-muted">
+          Saisir / modifier les matchs, dates, scores et deadline.
+        </p>
       </div>
-    </div></div>`;
+
+      <!-- ── Calendrier ── -->
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title" style="margin-bottom:8px">🔄 Calendrier automatique</div>
+        <button class="btn-primary" onclick="ouvrirCalendrierAdmin()" style="width:100%;margin-bottom:4px">
+          📡 Charger depuis TheSportsDB
+        </button>
+        <p class="text-sm text-muted">Charge les matchs et scores pour une plage de journées.</p>
+      </div>
+
+      <!-- ── Joueurs ── -->
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title" style="margin-bottom:8px">👥 Joueurs</div>
+        <button class="btn-primary" onclick="chargerAdminJoueurs()" style="width:100%;margin-bottom:4px">
+          👥 Gérer les joueurs (${APP.joueurs.length} actif${APP.joueurs.length>1?'s':''})
+        </button>
+        <p class="text-sm text-muted">Ajouter, modifier ou retirer des participants.</p>
+      </div>
+
+      <!-- ── Saison ── -->
+      <div class="card">
+        <div class="card-title" style="margin-bottom:8px">🏁 Saison</div>
+        <button onclick="confirmerClotureSaison()"
+          style="width:100%;padding:12px;background:#C00000;color:white;border:none;
+                 border-radius:10px;font-size:14px;font-weight:500;cursor:pointer">
+          🏁 Clôturer la saison ${CONFIG.saison}
+        </button>
+        <p class="text-sm text-muted" style="margin-top:4px">
+          Archive la saison et calcule le palmarès final.
+        </p>
+      </div>
+
+    </div>`;
 }
+
+// Met à jour le texte du bouton quand on change la sélection
+function adminMettreAJourBoutonJournee() {
+  const sel = document.getElementById('admin-select-journee');
+  const btn = document.getElementById('btn-gerer-journee');
+  if (sel && btn) {
+    btn.textContent = `✏️ Gérer la Journée ${sel.value}`;
+  }
+}
+
+// Navigue vers la journée sélectionnée dans la Grille
+function adminNaviguerVersJournee() {
+  const sel = document.getElementById('admin-select-journee');
+  if (!sel) return;
+  APP.journeeActive = parseInt(sel.value);
+  const badge = document.getElementById('header-journee-badge');
+  if (badge) badge.textContent = `J.${APP.journeeActive}`;
+  chargerTab('grille');
+}
+
+// Ouvre le gestionnaire pour la journée sélectionnée dans la liste
+function adminOuvrirJourneeSelectionnee() {
+  const sel = document.getElementById('admin-select-journee');
+  const j   = sel ? parseInt(sel.value) : APP.journeeActive;
+  APP.journeeActive = j;
+  ouvrirAdminJournee();
+}
+
 
 // ── Grille ────────────────────────────────────────────────────
 function chargerGrille() {
