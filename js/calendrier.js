@@ -11,13 +11,21 @@ function saisonApiFormat(s) {
 }
 
 // ── Charger une journée depuis l'API ────────────────────────
-async function fetchJourneeAPI(numJournee, saisonLabel) {
+async function fetchJourneeAPI(numJournee, saisonLabel, tentative = 1) {
   const saison = saisonApiFormat(saisonLabel || CONFIG.saison);
   const url = `https://www.thesportsdb.com/api/v1/json/3/eventsround.php` +
               `?id=${SPORTSDB_LEAGUE}&r=${numJournee}&s=${saison}`;
   try {
     const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    if (!resp.ok) {
+      if (resp.status === 429 && tentative <= 3) {
+        // Rate limit : attendre 2s et réessayer
+        console.warn(`Rate limit J${numJournee}, retry ${tentative}/3...`);
+        await new Promise(r => setTimeout(r, 2000 * tentative));
+        return fetchJourneeAPI(numJournee, saisonLabel, tentative + 1);
+      }
+      throw new Error(`HTTP ${resp.status}`);
+    }
     const data = await resp.json();
     return (data.events || []).map(e => ({
       domicile:  e.strHomeTeam  || '',
@@ -141,7 +149,7 @@ async function lancerChargementCalendrier() {
       }
     }
     // Pause anti-rate-limit
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 600)); // délai anti-rate-limit
   }
 
   progressBar.style.width = '100%';
