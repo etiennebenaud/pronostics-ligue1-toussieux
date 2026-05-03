@@ -8,6 +8,7 @@ const APP = {
   ecouteurs: [], deferredInstall: null,
   saisonAffichee: null,  // null = saison courante
   listeSaisons: [],
+  equipesL1: [],  // chargées dynamiquement depuis TheSportsDB
 };
 
 // ── Démarrage ────────────────────────────────────────────────
@@ -125,6 +126,8 @@ async function demarrerApp() {
   APP.saisonAffichee = saisonKey(CONFIG.saison);
   await chargerListeSaisons();
   await initialiserSaison(APP.saisonAffichee);
+  // Charger les équipes de la saison courante
+  APP.equipesL1 = await fetchEquipesSaison(saisonApiFormat(CONFIG.saison));
   // Détection automatique de la journée courante
   try {
     APP.journeeActive = await detecterJourneeCouranteFirestore();
@@ -204,11 +207,30 @@ function chargerAdmin() {
 
       <!-- ── Calendrier ── -->
       <div class="card" style="margin-bottom:12px">
-        <div class="card-title" style="margin-bottom:8px">🔄 Calendrier automatique</div>
-        <button class="btn-primary" onclick="ouvrirCalendrierAdmin()" style="width:100%;margin-bottom:4px">
+        <div class="card-title" style="margin-bottom:8px">🔄 Calendrier &amp; équipes</div>
+        <button class="btn-primary" onclick="ouvrirCalendrierAdmin()" style="width:100%;margin-bottom:8px">
           📡 Charger depuis TheSportsDB
         </button>
-        <p class="text-sm text-muted">Charge les matchs et scores pour une plage de journées.</p>
+        <p class="text-sm text-muted" style="margin-bottom:10px">Charge les matchs et scores pour une plage de journées.</p>
+        <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);
+                    padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div>
+            <p style="font-size:12px;font-weight:500;color:var(--color-text-primary);margin:0 0 2px">
+              Équipes ${CONFIG.saison}
+            </p>
+            <p style="font-size:11px;color:var(--color-text-secondary);margin:0">
+              ${APP.equipesL1.length > 0
+                ? APP.equipesL1.slice(0,3).join(', ') + (APP.equipesL1.length > 3 ? ` +${APP.equipesL1.length-3}` : '')
+                : 'Non chargées'}
+            </p>
+          </div>
+          <button id="btn-refresh-equipes" onclick="rafraichirEquipes().then(()=>chargerAdmin())"
+            style="background:var(--bleu-l);color:var(--bleu);border:none;
+                   border-radius:var(--border-radius-md);padding:7px 10px;
+                   font-size:11px;font-weight:500;cursor:pointer;white-space:nowrap;flex-shrink:0">
+            🔄 Rafraîchir
+          </button>
+        </div>
       </div>
 
       <!-- ── Joueurs ── -->
@@ -644,27 +666,120 @@ function chargerBonus() {
 }
 
 function renderBonus(data,monId) {
-  const mb=monId?(data[monId]||{}):{};
-  const js=!!data[`${monId}_soumis`];
-  const ro=(js&&!APP.estAdmin)?'readonly':'';
-  const eq=['Paris SG','Marseille','Lyon','Monaco','Lille','Lens','Rennes','Nice','Brest','Nantes','Strasbourg','Reims','Le Havre','Lorient','Toulouse','Metz','Auxerre','Angers'];
-  document.getElementById('tab-bonus').innerHTML=`<div style="padding:16px">
-    <datalist id="eq-list">${eq.map(e=>`<option value="${e}">`).join('')}</datalist>
-    <div class="card"><div class="card-title">🎯 Pronostics Fin de Saison</div>
-    <p class="text-sm text-muted" style="margin-bottom:12px">${js?'✅ Soumis et verrouillés.':'Saisissez vos pronostics.'}</p>
-    <div class="bonus-grid">
-      <div class="bonus-input-group"><label class="profil-label">🏆 Champion</label><input list="eq-list" class="bonus-input" id="b-champion" value="${mb.champion||''}" placeholder="Équipe" ${ro}></div>
-      <div></div>
-      <div class="bonus-input-group"><label class="profil-label">🥇 2ème</label><input list="eq-list" class="bonus-input" id="b-top2" value="${mb.top2||''}" placeholder="Équipe" ${ro}></div>
-      <div class="bonus-input-group"><label class="profil-label">🥈 3ème</label><input list="eq-list" class="bonus-input" id="b-top3" value="${mb.top3||''}" placeholder="Équipe" ${ro}></div>
-      <div class="bonus-input-group"><label class="profil-label">📉 Relégué 1</label><input list="eq-list" class="bonus-input" id="b-flop1" value="${mb.flop1||''}" placeholder="Équipe" ${ro}></div>
-      <div class="bonus-input-group"><label class="profil-label">📉 Relégué 2</label><input list="eq-list" class="bonus-input" id="b-flop2" value="${mb.flop2||''}" placeholder="Équipe" ${ro}></div>
-      <div class="bonus-input-group"><label class="profil-label">📉 Relégué 3</label><input list="eq-list" class="bonus-input" id="b-flop3" value="${mb.flop3||''}" placeholder="Équipe" ${ro}></div>
-      <div class="bonus-input-group"><label class="profil-label">⚽ Meilleur buteur</label><input class="bonus-input" id="b-buteur" value="${mb.buteur||''}" placeholder="Nom" ${ro}></div>
-      <div class="bonus-input-group"><label class="profil-label">🔢 Nombre de buts</label><input type="number" class="bonus-input" id="b-nbuts" value="${mb.nbuts||''}" placeholder="Ex: 22" min="0" max="50" ${ro}></div>
-    </div>
-    ${!js&&monId?`<button class="btn-soumettre" onclick="soumettreBonus()">✅ Soumettre</button>`:''}</div></div>`;
+  const mb  = monId ? (data[monId] || {}) : {};
+  const js  = !!data[`${monId}_soumis`];
+  const ro  = (js && !APP.estAdmin) ? 'readonly' : '';
+  // Liste dynamique depuis APP.equipesL1 (chargée depuis TheSportsDB au démarrage)
+  // Fallback sur une liste statique si pas encore chargée
+  const eq = (APP.equipesL1 && APP.equipesL1.length > 0)
+    ? APP.equipesL1
+    : ['Angers','Auxerre','Brest','Le Havre','Lens','Lille','Lorient',
+       'Lyon','Marseille','Metz','Monaco','Montpellier','Nantes','Nice',
+       'Paris FC','Paris SG','Rennes','Reims','Strasbourg','Toulouse'].sort();
+
+  const datalist = `<datalist id="eq-bonus-list">
+    ${eq.map(e => `<option value="${e}">`).join('')}
+  </datalist>`;
+
+  const sectionHdr = (icon, titre, pts, bg, color) =>
+    `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;
+                 border-radius:var(--border-radius-md);margin-bottom:10px;
+                 background:${bg}">
+      <span style="font-size:16px">${icon}</span>
+      <span style="font-size:13px;font-weight:500;color:${color}">${titre}</span>
+      <span style="margin-left:auto;font-size:11px;font-weight:500;
+                   background:var(--color-background-primary);color:${color};
+                   padding:2px 8px;border-radius:20px">${pts}</span>
+    </div>`;
+
+  const inputField = (id, label, placeholder, type='text', extra='') =>
+    `<div style="display:flex;flex-direction:column;gap:2px">
+      <span style="font-size:11px;color:var(--color-text-secondary)">${label}</span>
+      <input list="eq-bonus-list" id="${id}" type="${type}" class="bonus-input"
+        value="${mb[id.replace('b-','')] || ''}"
+        placeholder="${placeholder}" ${ro} ${extra}>
+    </div>`;
+
+  const soumisMsg = js
+    ? `<div style="background:var(--color-background-success);border-radius:var(--border-radius-md);
+                   padding:8px 12px;font-size:12px;color:var(--color-text-success);
+                   margin-bottom:14px;display:flex;align-items:center;gap:6px">
+        &#10003; Vos pronostics sont soumis et verrouillés.
+       </div>`
+    : `<p style="font-size:12px;color:var(--color-text-secondary);margin-bottom:14px;line-height:1.5">
+        Disponible à partir de la Journée ${CONFIG.regles.bonusSaisonDepuisJournee} · Soumis une seule fois, non modifiable
+       </p>`;
+
+  document.getElementById('tab-bonus').innerHTML = `
+    <div style="padding:16px">
+      ${datalist}
+      ${soumisMsg}
+
+      <!-- TOP 3 -->
+      <div style="margin-bottom:16px">
+        ${sectionHdr('&#127942;', 'Podium — Top 3', 'jusqu'à 50 pts',
+          'var(--color-background-warning)', 'var(--color-text-warning)')}
+
+        <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;
+                    align-items:center;margin-bottom:8px">
+          <div style="width:28px;height:28px;border-radius:50%;background:#FFD700;
+                      color:#7B5C00;display:flex;align-items:center;justify-content:center;
+                      font-size:16px;flex-shrink:0">&#129351;</div>
+          ${inputField('b-champion', 'Champion — 1er', 'Équipe gagnante du titre')}
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-left:36px">
+          ${inputField('b-top2', '&#129352; 2ème', 'Équipe')}
+          ${inputField('b-top3', '&#129353; 3ème', 'Équipe')}
+        </div>
+      </div>
+
+      <!-- FLOP 3 -->
+      <div style="margin-bottom:16px">
+        ${sectionHdr('&#128308;', 'Relégation — Flop 3', 'jusqu'à 25 pts',
+          'var(--color-background-danger)', 'var(--color-text-danger)')}
+
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            ${inputField('b-flop1', 'Relégué 1', 'Équipe')}
+            ${inputField('b-flop2', 'Relégué 2', 'Équipe')}
+          </div>
+          <div style="max-width:calc(50% - 4px)">
+            ${inputField('b-flop3', 'Relégué 3', 'Équipe')}
+          </div>
+        </div>
+      </div>
+
+      <!-- BUTEUR -->
+      <div style="margin-bottom:16px">
+        ${sectionHdr('&#9917;', 'Meilleur buteur', 'jusqu'à 25 pts',
+          'var(--color-background-info)', 'var(--color-text-info)')}
+
+        <div style="display:grid;grid-template-columns:1fr 80px;gap:8px;align-items:end">
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span style="font-size:11px;color:var(--color-text-secondary)">Nom du joueur</span>
+            <input id="b-buteur" class="bonus-input"
+              value="${mb.buteur || ''}" placeholder="Ex: Mbappé" ${ro}
+              style="font-size:13px">
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span style="font-size:11px;color:var(--color-text-secondary)">Buts</span>
+            <input id="b-nbuts" type="number" class="bonus-input"
+              value="${mb.nbuts || ''}" placeholder="Ex: 22"
+              min="0" max="60" ${ro} style="font-size:13px;text-align:center">
+          </div>
+        </div>
+      </div>
+
+      ${!js && monId
+        ? `<button class="btn-soumettre" onclick="soumettreBonus()"
+             style="margin-top:4px">
+             &#10003; Soumettre mes pronostics de fin de saison
+           </button>`
+        : ''}
+    </div>`;
 }
+
 
 async function soumettreBonus() {
   if(!APP.joueurActif||!confirm('Soumettre ? Non modifiable ensuite.')) return;
@@ -753,14 +868,15 @@ async function ouvrirAdminJournee() {
     matchsActuels.push({ domicile:'', exterieur:'', date:'', timestamp:null, scoreReel:null });
   }
 
-  const equipesL1 = ['Angers','Auxerre','Brest','Le Havre','Lens','Lille',
-    'Lorient','Lyon','Marseille','Metz','Monaco','Montpellier',
-    'Nantes','Nice','Paris FC','Paris SG','Rennes','Reims',
-    'Strasbourg','Toulouse'].sort();
+  // Utiliser les équipes dynamiques si disponibles, sinon fallback statique
+  const equipesL1 = (APP.equipesL1 && APP.equipesL1.length > 0)
+    ? APP.equipesL1
+    : ['Angers','Auxerre','Brest','Le Havre','Lens','Lille',
+       'Lorient','Lyon','Marseille','Metz','Monaco','Montpellier',
+       'Nantes','Nice','Paris FC','Paris SG','Rennes','Reims',
+       'Strasbourg','Toulouse'].sort();
 
-  const datalistHtml = `<datalist id="eq-admin-list">
-    ${equipesL1.map(e => `<option value="${e}">`).join('')}
-  </datalist>`;
+  const datalistHtml = `<datalist id="eq-admin-list">${equipesL1.map(e => `<option value="${e}">`).join('')}</datalist>`;
 
   const matchsHtml = matchsActuels.map((m, idx) => `
     <div style="background:var(--color-background-secondary);border-radius:8px;
@@ -804,7 +920,7 @@ async function ouvrirAdminJournee() {
     <hr class="divider">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <label class="profil-label" style="margin:0">⚽ Les 9 matchs</label>
-      <button onclick="chargerDepuisAPI(${j})"
+      <button onclick="chargerDepuisAPI(${j}, this)"
         style="font-size:11px;background:var(--bleu-l);color:var(--bleu);
                border:none;border-radius:6px;padding:5px 10px;cursor:pointer;font-weight:500">
         🔄 Recharger depuis API
