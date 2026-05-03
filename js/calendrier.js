@@ -74,7 +74,7 @@ async function ouvrirCalendrierAdmin() {
         <div>
           <label class="profil-label">Journées (ex: 1-38 ou 37-38)</label>
           <input class="profil-input" id="cal-range"
-            value="1-${CONFIG.nbJournees}" placeholder="Ex: 1-38">
+            value={`1-${CONFIG.nbJournees}`} placeholder="Ex: 1-38">
         </div>
       </div>
 
@@ -127,15 +127,30 @@ async function lancerChargementCalendrier() {
     if (matchs && matchs.length > 0) {
       journeesChargees[j] = matchs;
       ok++;
-    } else {
+    } else if (matchs === null) {
+      // Erreur réseau
       vides++;
+    } else {
+      // Journée vide = fin de saison atteinte (ex: L1 s'arrête à J34)
+      vides++;
+      // Si plusieurs journées vides consécutives → arrêt automatique
+      if (vides >= 3 && ok > 0) {
+        progressLabel.textContent =
+          `ℹ️ Arrêt à J${j-1} — fin de saison détectée (${ok} journées chargées)`;
+        break;
+      }
     }
     // Pause anti-rate-limit
     await new Promise(r => setTimeout(r, 300));
   }
 
   progressBar.style.width = '100%';
-  progressLabel.textContent = `✅ ${ok} journée(s) chargée(s), ${vides} vide(s)`;
+  if (vides > 0 && ok > 0) {
+    progressLabel.textContent =
+      `✅ ${ok} journée(s) chargées — ${vides} non trouvée(s) (fin de saison ou matchs non programmés)`;
+  } else {
+    progressLabel.textContent = `✅ ${ok} journée(s) chargée(s)`;
+  }
   btnCharger.disabled = false;
   btnCharger.textContent = '🔄 Recharger';
 
