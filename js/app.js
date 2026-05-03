@@ -16,7 +16,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.documentElement.style.setProperty('--bleu',   CONFIG.theme.couleurSecondaire);
   document.documentElement.style.setProperty('--vert',   CONFIG.theme.couleurVert);
   document.querySelector('.app-header h1').textContent        = CONFIG.theme.nomApp;
-  document.querySelector('.app-header .subtitle').textContent = CONFIG.theme.descriptionApp;
+  // Sous-titre dynamique : met à jour le span #header-saison
+  const headerSaisonEl = document.getElementById('header-saison');
+  if (headerSaisonEl) headerSaisonEl.textContent = CONFIG.saison;
   document.title = CONFIG.theme.nomApp;
 
   initFirebase();
@@ -100,7 +102,13 @@ async function demarrerApp() {
   document.getElementById('section-app').style.display   = 'block';
 
   const btnAdmin = document.getElementById('tab-admin-btn');
-  if (btnAdmin) btnAdmin.style.display = APP.estAdmin ? 'flex' : 'none';
+  if (btnAdmin) {
+    if (APP.estAdmin) {
+      btnAdmin.removeAttribute('style');
+    } else {
+      btnAdmin.setAttribute('style', 'display:none !important');
+    }
+  }
 
   const banner = document.getElementById('user-banner');
   if (banner) {
@@ -115,10 +123,16 @@ async function demarrerApp() {
   }
   APP.journeeActive  = CONFIG.regles.journeeDefaut > 0 ? CONFIG.regles.journeeDefaut : 1;
   APP.saisonAffichee = saisonKey(CONFIG.saison);
+  await chargerListeSaisons();
+  await initialiserSaison(APP.saisonAffichee);
+  // Détection automatique de la journée courante
+  try {
+    APP.journeeActive = await detecterJourneeCouranteFirestore();
+  } catch(e) {
+    APP.journeeActive = CONFIG.regles.journeeDefaut > 0 ? CONFIG.regles.journeeDefaut : 1;
+  }
   const jBadge = document.getElementById('header-journee-badge');
   if (jBadge) jBadge.textContent = 'J.' + APP.journeeActive;
-  const hSaison = document.getElementById('header-saison');
-  if (hSaison) hSaison.textContent = CONFIG.saison;
   chargerTab('grille');
 }
 
@@ -150,6 +164,13 @@ function chargerAdmin() {
         👥 Gérer les joueurs (${APP.joueurs.length} actif${APP.joueurs.length>1?'s':''})
       </button>
       <p class="text-sm text-muted" style="margin-bottom:16px">Ajouter, modifier, retirer. Aucune limite.</p>
+      <hr class="divider">
+      <button class="btn-primary" onclick="ouvrirCalendrierAdmin()" style="margin-bottom:8px">
+        📅 Charger le calendrier (TheSportsDB)
+      </button>
+      <p class="text-sm text-muted" style="margin-bottom:16px">
+        Scrape les matchs et les valide journée par journée.
+      </p>
       <hr class="divider">
       <button class="btn-primary" onclick="ouvrirAdminJournee()" style="margin-bottom:8px">
         📅 Gérer la Journée ${APP.journeeActive}
