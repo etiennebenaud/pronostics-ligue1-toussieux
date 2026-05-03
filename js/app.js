@@ -6,6 +6,8 @@ const APP = {
   db: null, joueurActif: null, joueurs: [],
   estAdmin: false, journeeActive: 1,
   ecouteurs: [], deferredInstall: null,
+  saisonAffichee: null,  // null = saison courante
+  listeSaisons: [],
 };
 
 // ── Démarrage ────────────────────────────────────────────────
@@ -111,7 +113,8 @@ async function demarrerApp() {
          <div class="user-info"><div class="user-name">Administrateur</div><div class="user-team">Mode admin</div></div>
          <button class="btn-logout" onclick="deconnexion()">Se déconnecter</button>`;
   }
-  APP.journeeActive = CONFIG.regles.journeeDefaut > 0 ? CONFIG.regles.journeeDefaut : 1;
+  APP.journeeActive  = CONFIG.regles.journeeDefaut > 0 ? CONFIG.regles.journeeDefaut : 1;
+  APP.saisonAffichee = saisonKey(CONFIG.saison);
   const jBadge = document.getElementById('header-journee-badge');
   if (jBadge) jBadge.textContent = 'J.' + APP.journeeActive;
   const hSaison = document.getElementById('header-saison');
@@ -133,7 +136,7 @@ function chargerTab(tabId) {
   document.querySelectorAll('.tab-content').forEach(s => s.classList.toggle('active', s.id === 'tab-' + tabId));
   APP.ecouteurs.forEach(fn => fn()); APP.ecouteurs = [];
   const fns = { grille: chargerGrille, resultats: chargerResultats, classement: chargerClassement,
-                bonus: chargerBonus, profil: chargerProfil, admin: chargerAdmin };
+                bonus: chargerBonus, profil: chargerProfil, admin: chargerAdmin, palmares: chargerPalmares };
   fns[tabId]?.();
 }
 document.querySelectorAll('.nav-tab').forEach(tab => tab.addEventListener('click', () => chargerTab(tab.dataset.tab)));
@@ -153,7 +156,15 @@ function chargerAdmin() {
       </button>
       <p class="text-sm text-muted" style="margin-bottom:16px">Deadline, scores réels.</p>
       <hr class="divider">
-      <div style="background:var(--color-background-tertiary);border-radius:8px;padding:12px;margin-top:8px">
+      <button class="btn-primary" onclick="confirmerClotureSaison()"
+        style="margin-bottom:8px;background:#C00000;width:100%">
+        🏁 Clôturer la saison ${CONFIG.saison}
+      </button>
+      <p class="text-sm text-muted" style="margin-bottom:16px">
+        Archive la saison et calcule le palmarès final.
+      </p>
+      <hr class="divider">
+            <div style="background:var(--color-background-tertiary);border-radius:8px;padding:12px;margin-top:8px">
         <p style="font-size:12px;font-weight:500;color:var(--color-text-secondary);margin-bottom:8px">Joueurs actifs :</p>
         <div style="display:flex;flex-wrap:wrap;gap:6px">
           ${APP.joueurs.map(j=>`<span style="background:var(--color-background-secondary);padding:3px 10px;border-radius:12px;font-size:12px">${j.emoji} ${j.nom}</span>`).join('')
@@ -177,7 +188,7 @@ function chargerGrille() {
       <div id="grille-matchs"><div class="loading"><div class="spinner"></div>Chargement...</div></div>
       <div id="btn-soumettre-container"></div>
     </div>`;
-  const unsub = APP.db.collection('journees').doc(`j${APP.journeeActive}`)
+  const unsub = dbSaison('journees', `j${APP.journeeActive}`)
     .onSnapshot(snap => renderGrille(APP.journeeActive, snap.exists ? snap.data() : {}));
   APP.ecouteurs.push(unsub);
 }
@@ -209,15 +220,16 @@ function renderGrille(j, data) {
   }).join('');
 
   const monId = APP.joueurActif?.id;
-  const jaiSoumis = monId ? !!soumissions[monId] : false;
-  const peutVoir  = APP.estAdmin || jaiSoumis;
+  const jaiSoumis  = monId ? !!soumissions[monId] : false;
+  const peutVoir   = APP.estAdmin || jaiSoumis;
+  const saisonRO   = !estSaisonCourante(); // lecture seule si saison archivée
 
   const mc = document.getElementById('grille-matchs');
   if (!mc) return;
   mc.innerHTML = matchs.map((match, idx) => {
     const sr = match.scoreReel || null;
     const pts = (prono, reel) => reel ? calculerPoints(prono, reel) : null;
-    const locked = jaiSoumis || !saisieOuverte;
+    const locked = jaiSoumis || !saisieOuverte || saisonRO;
     const monProno = soumissions[monId]?.[idx] || { dom:'', ext:'' };
     const mesPoints = monId && sr ? calculerPoints(monProno, sr) : null;
 
@@ -290,7 +302,7 @@ async function soumettre(j) {
   if (complets < CONFIG.nbMatchsParJournee && !confirm(`${CONFIG.nbMatchsParJournee-complets} match(s) sans pronostic. Soumettre quand même ?`)) return;
   if (!confirm(`Confirmer pour la Journée ${j} ?\n⚠️ Non modifiable ensuite.`)) return;
   try {
-    await APP.db.collection('journees').doc(`j${j}`).set({
+    await dbSaison('journees', `j${j}`).set({
       [`soumissions.${APP.joueurActif.id}`]: pronostics,
       [`statuts.${APP.joueurActif.id}`]: { soumisAt: Date.now(), complets },
     }, { merge: true });
@@ -316,7 +328,7 @@ function chargerResultats() {
       </div>
       <div id="resultats-content"><div class="loading"><div class="spinner"></div></div></div>
     </div>`;
-  const unsub = APP.db.collection('journees').doc(`j${APP.journeeActive}`)
+  const unsub = dbSaison('journees', `j${APP.journeeActive}`)
     .onSnapshot(snap => renderResultats(APP.journeeActive, snap.exists ? snap.data() : {}));
   APP.ecouteurs.push(unsub);
 }
@@ -374,7 +386,7 @@ function renderResultats(j, data) {
 async function saisirScore(j,idx,cote,val) {
   if(!APP.estAdmin) return;
   try {
-    const ref=APP.db.collection('journees').doc(`j${j}`);
+    const ref=dbSaison('journees', `j${j}`);
     const snap=await ref.get();
     const matchs=snap.exists?(snap.data().matchs||genererMatchsVides()):genererMatchsVides();
     if(!matchs[idx].scoreReel) matchs[idx].scoreReel={};
@@ -387,7 +399,7 @@ async function saisirScore(j,idx,cote,val) {
 function chargerClassement() {
   document.getElementById('tab-classement').innerHTML=`<div style="padding:16px"><div class="loading"><div class="spinner"></div>Calcul...</div></div>`;
   Promise.all(Array.from({length:CONFIG.nbJournees},(_,i)=>
-    APP.db.collection('journees').doc(`j${i+1}`).get()
+    dbSaison('journees', `j${i+1}`).get()
   )).then(snaps=>{
     const totaux=Object.fromEntries(APP.joueurs.map(jo=>[jo.id,{pts:0,gains:0}]));
     snaps.forEach(snap=>{
@@ -426,7 +438,7 @@ function chargerBonus() {
   if(APP.journeeActive<CONFIG.regles.bonusSaisonDepuisJournee&&!APP.estAdmin) {
     document.getElementById('tab-bonus').innerHTML=`<div style="padding:16px"><div class="empty-state"><div class="icon">🔒</div><p>Disponible à partir de la Journée ${CONFIG.regles.bonusSaisonDepuisJournee}.</p></div></div>`; return;
   }
-  const unsub=APP.db.collection('bonus').doc('saison').onSnapshot(snap=>renderBonus(snap.exists?snap.data():{},monId));
+  const unsub=dbSaison('bonus', 'saison').onSnapshot(snap=>renderBonus(snap.exists?snap.data():{},monId));
   APP.ecouteurs.push(unsub);
 }
 
@@ -456,7 +468,7 @@ function renderBonus(data,monId) {
 async function soumettreBonus() {
   if(!APP.joueurActif||!confirm('Soumettre ? Non modifiable ensuite.')) return;
   try {
-    await APP.db.collection('bonus').doc('saison').set({
+    await dbSaison('bonus', 'saison').set({
       [APP.joueurActif.id]: {
         champion:document.getElementById('b-champion').value, top2:document.getElementById('b-top2').value,
         top3:document.getElementById('b-top3').value, flop1:document.getElementById('b-flop1').value,
@@ -530,13 +542,13 @@ function ouvrirAdminJournee() {
 async function saisirDeadline(j) {
   const val=document.getElementById('admin-deadline')?.value;
   if(!val) return;
-  try { await APP.db.collection('journees').doc(`j${j}`).set({deadline:new Date(val).getTime()},{merge:true}); fermerModal(); showToast(`⏰ Deadline J${j} enregistrée`,'success'); }
+  try { await dbSaison('journees', `j${j}`).set({deadline:new Date(val).getTime()},{merge:true}); fermerModal(); showToast(`⏰ Deadline J${j} enregistrée`,'success'); }
   catch(e) { showToast('Erreur','error'); }
 }
 
 async function resetJournee(j) {
   if(!confirm(`Réinitialiser la journée ${j} ?\nTous les pronostics seront effacés.`)) return;
-  try { await APP.db.collection('journees').doc(`j${j}`).set({soumissions:{},statuts:{}},{merge:true}); fermerModal(); showToast(`✅ Journée ${j} réinitialisée`,'warning'); chargerTab('grille'); }
+  try { await dbSaison('journees', `j${j}`).set({soumissions:{},statuts:{}},{merge:true}); fermerModal(); showToast(`✅ Journée ${j} réinitialisée`,'warning'); chargerTab('grille'); }
   catch(e) { showToast('Erreur reset','error'); }
 }
 
