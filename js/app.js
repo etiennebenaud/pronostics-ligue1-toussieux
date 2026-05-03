@@ -359,49 +359,160 @@ function changerJourneeR(d) {
 }
 
 function renderResultats(j, data) {
-  const matchs=data.matchs||genererMatchsVides(), soumissions=data.soumissions||{};
-  const el=document.getElementById('num-j-r'); if(el) el.textContent=j;
-  const totaux=Object.fromEntries(APP.joueurs.map(jo=>[jo.id,0]));
-  let html=`<div class="resultats-table"><table><thead><tr>
-    <th class="match-col">Match</th><th>Score</th>
-    ${APP.joueurs.map(jo=>`<th>${jo.emoji}</th>`).join('')}
+  const matchs      = data.matchs      || genererMatchsVides();
+  const soumissions = data.soumissions || {};
+  const deadline    = data.deadline    || null;
+
+  // Une journée est "fermée" si sa deadline est passée OU si tous ses scores sont entrés
+  const now           = Date.now();
+  const deadlinePassee = deadline && deadline < now;
+  const tousScores     = matchs.length > 0 && matchs.every(m => m.scoreReel !== null);
+  const journeeFermee  = deadlinePassee || tousScores;
+
+  // En saison archivée : jamais de points ni gains
+  const afficherPtsGains = estSaisonCourante() && journeeFermee;
+
+  // Admin peut saisir les scores seulement si journée PAS encore fermée
+  // (ou si saison courante et scores manquants)
+  const adminPeutSaisir = APP.estAdmin && estSaisonCourante();
+
+  const el = document.getElementById('num-j-r');
+  if (el) el.textContent = j;
+
+  const totaux = Object.fromEntries(APP.joueurs.map(jo => [jo.id, 0]));
+
+  let html = `<div class="resultats-table"><table><thead><tr>
+    <th class="match-col">Match</th>
+    <th>Score</th>
+    ${APP.joueurs.map(jo => `<th title="${jo.nom}">${jo.emoji}</th>`).join('')}
   </tr></thead><tbody>`;
-  matchs.forEach((match,idx)=>{
-    const sr=match.scoreReel||null;
-    html+=`<tr><td class="match-col">${(match.domicile||'?').slice(0,8)} - ${(match.exterieur||'?').slice(0,8)}</td>
-      <td class="score-cell">${APP.estAdmin
-        ?`<input type="number" style="width:28px;border:1px solid #ccc;border-radius:4px;text-align:center;font-size:12px"
-           value="${sr?.dom??''}" onchange="saisirScore(${j},${idx},'dom',this.value)" min="0" max="20"> -
-          <input type="number" style="width:28px;border:1px solid #ccc;border-radius:4px;text-align:center;font-size:12px"
-           value="${sr?.ext??''}" onchange="saisirScore(${j},${idx},'ext',this.value)" min="0" max="20">`
-        : sr?`<strong>${sr.dom}-${sr.ext}</strong>`:'<span style="color:#ccc">—</span>'}</td>`;
-    APP.joueurs.forEach(jo=>{
-      const p=soumissions[jo.id]?.[idx], pts=(p&&sr)?calculerPoints(p,sr):null;
-      if(pts!==null) totaux[jo.id]+=pts;
-      const vis=APP.estAdmin||APP.joueurActif?.id===jo.id||(APP.joueurActif&&soumissions[APP.joueurActif.id]&&soumissions[jo.id]);
-      if(!vis) html+=`<td class="hidden-cell">?</td>`;
-      else if(!p) html+=`<td>—</td>`;
-      else html+=`<td class="prono-cell ${pts!==null?`pts-${pts}`:''}">
-        ${p.dom}-${p.ext}${pts!==null?`<br><small>${pts}pt</small>`:''}</td>`;
+
+  matchs.forEach((match, idx) => {
+    const sr = match.scoreReel || null;
+    const bgRow = idx % 2 === 0 ? '' : 'style="background:var(--color-background-secondary)"';
+
+    // Cellule score
+    let scoreHtml;
+    if (sr) {
+      if (adminPeutSaisir) {
+        // Admin + saison courante : inputs éditables
+        scoreHtml = `
+          <input type="number"
+            style="width:26px;border:1px solid var(--vert);border-radius:4px;
+                   text-align:center;font-size:12px;font-weight:700;color:var(--vert)"
+            value="${sr.dom}" onchange="saisirScore(${j},${idx},'dom',this.value)" min="0" max="20">
+          <span style="font-weight:700;color:var(--gris)">-</span>
+          <input type="number"
+            style="width:26px;border:1px solid var(--vert);border-radius:4px;
+                   text-align:center;font-size:12px;font-weight:700;color:var(--vert)"
+            value="${sr.ext}" onchange="saisirScore(${j},${idx},'ext',this.value)" min="0" max="20">`;
+      } else {
+        // Journée fermée OU saison archivée : score grisé, non éditable
+        scoreHtml = `
+          <span style="font-size:13px;font-weight:700;
+                       color:${journeeFermee ? 'var(--gris)' : 'var(--vert)'};
+                       background:${journeeFermee ? 'var(--gris-l)' : 'var(--vert-l)'};
+                       padding:2px 7px;border-radius:6px">
+            ${sr.dom} - ${sr.ext}
+          </span>`;
+      }
+    } else if (adminPeutSaisir) {
+      // Pas encore de score + admin saison courante : inputs vides
+      scoreHtml = `
+        <input type="number"
+          style="width:26px;border:1px solid #ddd;border-radius:4px;
+                 text-align:center;font-size:12px"
+          value="" onchange="saisirScore(${j},${idx},'dom',this.value)" min="0" max="20" placeholder="—">
+        <span style="color:var(--gris)">-</span>
+        <input type="number"
+          style="width:26px;border:1px solid #ddd;border-radius:4px;
+                 text-align:center;font-size:12px"
+          value="" onchange="saisirScore(${j},${idx},'ext',this.value)" min="0" max="20" placeholder="—">`;
+    } else {
+      scoreHtml = '<span style="color:var(--gris-l);font-size:13px">—</span>';
+    }
+
+    html += `<tr ${bgRow}>
+      <td class="match-col" style="font-size:11px">
+        ${match.domicile||'?'} - ${match.exterieur||'?'}
+      </td>
+      <td class="score-cell" style="white-space:nowrap">${scoreHtml}</td>`;
+
+    // Colonnes pronostics par joueur
+    APP.joueurs.forEach(jo => {
+      const p   = soumissions[jo.id]?.[idx];
+      const pts = (p && sr && afficherPtsGains) ? calculerPoints(p, sr) : null;
+      if (pts !== null) totaux[jo.id] += pts;
+
+      const vis = APP.estAdmin
+        || APP.joueurActif?.id === jo.id
+        || (APP.joueurActif && soumissions[APP.joueurActif.id] && soumissions[jo.id]);
+
+      if (!vis) {
+        html += `<td class="hidden-cell">?</td>`;
+      } else if (!p) {
+        html += `<td style="color:var(--gris-l)">—</td>`;
+      } else if (!sr) {
+        // Score pas encore entré : afficher le prono sans couleur
+        html += `<td class="prono-cell" style="color:var(--gris)">${p.dom}-${p.ext}</td>`;
+      } else if (!afficherPtsGains) {
+        // Saison archivée ou journée ouverte : prono visible mais grisé, sans points
+        html += `<td class="prono-cell" style="color:var(--gris)">${p.dom}-${p.ext}</td>`;
+      } else {
+        // Saison courante + journée fermée : couleur selon les points
+        const cls = pts === 7 ? 'pts-7' : pts === 5 ? 'pts-5' : pts === 3 ? 'pts-3' : 'pts-0';
+        html += `<td class="prono-cell ${cls}">
+          ${p.dom}-${p.ext}<br><small>${pts}pt</small>
+        </td>`;
+      }
     });
-    html+='</tr>';
+
+    html += '</tr>';
   });
-  html+=`<tr style="background:var(--color-background-secondary);font-weight:500">
-    <td colspan="2" style="text-align:right;padding-right:8px;font-size:12px">Total</td>
-    ${APP.joueurs.map(jo=>`<td style="font-size:13px;color:var(--orange);font-weight:700">${totaux[jo.id]||'—'}</td>`).join('')}
-  </tr></tbody></table></div>`;
-  const classJ=APP.joueurs.filter(jo=>totaux[jo.id]>0).sort((a,b)=>totaux[b.id]-totaux[a.id]);
-  if(classJ.length>0) {
-    html+=`<div class="card mt-12"><div class="card-title">🏆 Podium Journée ${j}</div>
-      ${classJ.slice(0,3).map((jo,i)=>{
-        const gain=[CONFIG.gains.premier,CONFIG.gains.deuxieme,CONFIG.gains.troisieme][i]||0;
-        return `<div class="classement-row"><div class="rang-badge rang-${i+1}">${['🥇','🥈','🥉'][i]}</div>
-          <div class="classement-nom">${jo.emoji} ${jo.nom}</div>
-          <div class="classement-pts">${totaux[jo.id]}<span>pts</span></div>
-          <div class="classement-gains">+${gain}€</div></div>`;
-      }).join('')}</div>`;
+
+  // Ligne totaux (seulement si points affichés)
+  if (afficherPtsGains) {
+    html += `<tr style="background:var(--color-background-secondary);font-weight:500">
+      <td colspan="2" style="text-align:right;padding-right:8px;font-size:12px">Total</td>
+      ${APP.joueurs.map(jo =>
+        `<td style="font-size:13px;color:var(--orange);font-weight:700">${totaux[jo.id] || '—'}</td>`
+      ).join('')}
+    </tr>`;
   }
-  const rc=document.getElementById('resultats-content'); if(rc) rc.innerHTML=html;
+
+  html += '</tbody></table></div>';
+
+  // Podium (seulement si points affichés)
+  if (afficherPtsGains) {
+    const classJ = APP.joueurs
+      .filter(jo => totaux[jo.id] > 0)
+      .sort((a, b) => totaux[b.id] - totaux[a.id]);
+
+    if (classJ.length > 0) {
+      html += `<div class="card mt-12">
+        <div class="card-title">🏆 Podium Journée ${j}</div>
+        ${classJ.slice(0, 3).map((jo, i) => {
+          const gain = [CONFIG.gains.premier, CONFIG.gains.deuxieme, CONFIG.gains.troisieme][i] || 0;
+          return `<div class="classement-row">
+            <div class="rang-badge rang-${i+1}">${['🥇','🥈','🥉'][i]}</div>
+            <div class="classement-nom">${jo.emoji} ${jo.nom}</div>
+            <div class="classement-pts">${totaux[jo.id]}<span>pts</span></div>
+            <div class="classement-gains">+${gain}€</div>
+          </div>`;
+        }).join('')}
+      </div>`;
+    }
+  } else if (journeeFermee) {
+    // Journée fermée mais pas de points (saison archivée ou pas de scores)
+    html += `<div class="card mt-12" style="background:var(--gris-l);border:none">
+      <p class="text-sm text-muted text-center" style="padding:4px 0">
+        📁 Journée archivée — scores en lecture seule
+      </p>
+    </div>`;
+  }
+
+  const rc = document.getElementById('resultats-content');
+  if (rc) rc.innerHTML = html;
 }
 
 async function saisirScore(j,idx,cote,val) {
