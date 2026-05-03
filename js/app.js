@@ -33,6 +33,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     const j = APP.joueurs.find(j => j.id === savedId);
     if (j) { APP.joueurActif = j; await demarrerApp(); return; }
   }
+  // Attacher les listeners du formulaire login
+  document.getElementById('login-form')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    await traiterConnexion(document.getElementById('login-input').value.trim().toUpperCase());
+  });
+  document.getElementById('login-input')?.addEventListener('input', () => {
+    document.getElementById('login-error')?.classList.remove('show');
+  });
+
   afficherLogin();
 
   window.addEventListener('beforeinstallprompt', e => {
@@ -66,13 +75,6 @@ function afficherLogin() {
   setTimeout(() => document.getElementById('login-input')?.focus(), 100);
 }
 
-document.getElementById('login-form')?.addEventListener('submit', async e => {
-  e.preventDefault();
-  await traiterConnexion(document.getElementById('login-input').value.trim().toUpperCase());
-});
-document.getElementById('login-input')?.addEventListener('input', () => {
-  document.getElementById('login-error')?.classList.remove('show');
-});
 
 async function traiterConnexion(code) {
   if (!code) return;
