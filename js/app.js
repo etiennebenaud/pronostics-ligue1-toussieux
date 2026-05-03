@@ -657,18 +657,196 @@ async function sauverProfil() {
 }
 
 // ── Admin journée ─────────────────────────────────────────────
-function ouvrirAdminJournee() {
-  const j=APP.journeeActive;
-  document.getElementById('modal-title').textContent=`📅 Admin — Journée ${j}`;
-  document.getElementById('modal-body').innerHTML=`
-    <p class="text-sm text-muted" style="margin-bottom:12px">Gestion de la journée ${j}.</p>
-    <label class="profil-label">Deadline de saisie</label>
-    <input type="datetime-local" class="profil-input" id="admin-deadline" style="margin-bottom:8px">
-    <button class="btn-primary" onclick="saisirDeadline(${j})">⏰ Enregistrer</button>
-    <hr class="divider">
-    <button class="btn-danger" onclick="resetJournee(${j})">🗑️ Réinitialiser la journée ${j}</button>
-    <p class="text-sm text-muted text-center mt-8">Efface tous les pronostics.</p>`;
+async function ouvrirAdminJournee() {
+  const j = APP.journeeActive;
+  document.getElementById('modal-title').textContent = `📅 Admin — Journée ${j}`;
+  document.getElementById('modal-body').innerHTML =
+    `<div class="loading"><div class="spinner"></div>Chargement...</div>`;
   ouvrirModal();
+
+  // Charger les données existantes de la journée
+  let matchsActuels = [];
+  let deadlineActuelle = '';
+  try {
+    const snap = await dbSaison('journees', `j${j}`).get();
+    if (snap.exists) {
+      matchsActuels   = snap.data().matchs   || [];
+      const dl        = snap.data().deadline || null;
+      if (dl) {
+        const d = new Date(dl);
+        deadlineActuelle = d.toISOString().slice(0,16);
+      }
+    }
+  } catch(e) { console.error(e); }
+
+  // Compléter avec des matchs vides si moins de 9
+  while (matchsActuels.length < CONFIG.nbMatchsParJournee) {
+    matchsActuels.push({ domicile:'', exterieur:'', date:'', timestamp:null, scoreReel:null });
+  }
+
+  const equipesL1 = ['Angers','Auxerre','Brest','Le Havre','Lens','Lille',
+    'Lorient','Lyon','Marseille','Metz','Monaco','Montpellier',
+    'Nantes','Nice','Paris FC','Paris SG','Rennes','Reims',
+    'Strasbourg','Toulouse'].sort();
+
+  const datalistHtml = `<datalist id="eq-admin-list">
+    ${equipesL1.map(e => `<option value="${e}">`).join('')}
+  </datalist>`;
+
+  const matchsHtml = matchsActuels.map((m, idx) => `
+    <div style="background:var(--color-background-secondary);border-radius:8px;
+                padding:10px;margin-bottom:8px;border:1px solid var(--color-border-tertiary)">
+      <div style="display:flex;align-items:center;gap:4px;margin-bottom:8px">
+        <span style="font-size:11px;font-weight:500;color:var(--color-text-secondary);
+                     min-width:20px">M${idx+1}</span>
+        <input list="eq-admin-list" class="profil-input" id="m${idx}-dom"
+          value="${m.domicile||''}" placeholder="Domicile"
+          style="flex:1;font-size:13px;padding:7px 10px">
+        <span style="font-weight:700;color:var(--gris);padding:0 4px">vs</span>
+        <input list="eq-admin-list" class="profil-input" id="m${idx}-ext"
+          value="${m.exterieur||''}" placeholder="Extérieur"
+          style="flex:1;font-size:13px;padding:7px 10px">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="datetime-local" class="profil-input" id="m${idx}-date"
+          value="${m.timestamp ? new Date(m.timestamp).toISOString().slice(0,16) : ''}"
+          style="flex:1;font-size:12px;padding:6px 8px">
+        <span style="font-size:11px;color:var(--gris);white-space:nowrap">Score :</span>
+        <input type="number" id="m${idx}-sdom" min="0" max="20"
+          value="${m.scoreReel?.dom ?? ''}" placeholder="—"
+          style="width:36px;border:1px solid var(--color-border-tertiary);border-radius:6px;
+                 text-align:center;font-size:13px;font-weight:700;padding:5px 2px">
+        <span style="font-weight:700;color:var(--gris)">-</span>
+        <input type="number" id="m${idx}-sext" min="0" max="20"
+          value="${m.scoreReel?.ext ?? ''}" placeholder="—"
+          style="width:36px;border:1px solid var(--color-border-tertiary);border-radius:6px;
+                 text-align:center;font-size:13px;font-weight:700;padding:5px 2px">
+      </div>
+    </div>`).join('');
+
+  document.getElementById('modal-body').innerHTML = `
+    ${datalistHtml}
+    <div style="margin-bottom:12px">
+      <label class="profil-label">⏰ Deadline de saisie des pronostics</label>
+      <input type="datetime-local" class="profil-input" id="admin-deadline"
+        value="${deadlineActuelle}" style="margin-bottom:4px">
+      <p class="text-sm text-muted">= 1h avant le 1er match (auto si vous remplissez les dates)</p>
+    </div>
+    <hr class="divider">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <label class="profil-label" style="margin:0">⚽ Les 9 matchs</label>
+      <button onclick="chargerDepuisAPI(${j})"
+        style="font-size:11px;background:var(--bleu-l);color:var(--bleu);
+               border:none;border-radius:6px;padding:5px 10px;cursor:pointer;font-weight:500">
+        🔄 Recharger depuis API
+      </button>
+    </div>
+    ${matchsHtml}
+    <button class="btn-primary" onclick="validerJourneeManuelle(${j})" style="margin-top:4px">
+      ✅ Enregistrer la journée ${j}
+    </button>
+    <hr class="divider">
+    <button class="btn-danger" onclick="resetJournee(${j})">
+      🗑️ Réinitialiser la journée ${j}
+    </button>
+    <p class="text-sm text-muted text-center mt-8">Efface tous les pronostics.</p>`;
+}
+
+// Recharger une journée depuis l'API et remplir les champs
+async function chargerDepuisAPI(j) {
+  const saisonInput = CONFIG.saison;
+  const btn = event.target;
+  btn.textContent = '⏳ Chargement...';
+  btn.disabled = true;
+
+  const matchs = await fetchJourneeAPI(j, saisonInput);
+  if (!matchs || matchs.length === 0) {
+    showToast(`Journée ${j} non trouvée sur TheSportsDB`, 'error');
+    btn.textContent = '🔄 Recharger depuis API';
+    btn.disabled = false;
+    return;
+  }
+
+  matchs.forEach((m, idx) => {
+    const dom  = document.getElementById(`m${idx}-dom`);
+    const ext  = document.getElementById(`m${idx}-ext`);
+    const date = document.getElementById(`m${idx}-date`);
+    const sdom = document.getElementById(`m${idx}-sdom`);
+    const sext = document.getElementById(`m${idx}-sext`);
+    if (dom)  dom.value  = m.domicile  || '';
+    if (ext)  ext.value  = m.exterieur || '';
+    if (date && m.timestamp) date.value = new Date(m.timestamp).toISOString().slice(0,16);
+    if (sdom && m.scoreReel?.dom !== undefined) sdom.value = m.scoreReel.dom ?? '';
+    if (sext && m.scoreReel?.ext !== undefined) sext.value = m.scoreReel.ext ?? '';
+  });
+
+  // Auto-remplir deadline = 1h avant le 1er match
+  const premierTs = matchs.find(m => m.timestamp)?.timestamp;
+  if (premierTs) {
+    const dl = document.getElementById('admin-deadline');
+    if (dl) dl.value = new Date(premierTs - 3600000).toISOString().slice(0,16);
+  }
+
+  btn.textContent = '✅ Rechargé';
+  showToast(`Journée ${j} chargée depuis TheSportsDB`, 'success');
+}
+
+// Valider la journée saisie manuellement
+async function validerJourneeManuelle(j) {
+  const matchs = [];
+  let premierTs = null;
+
+  for (let idx = 0; idx < CONFIG.nbMatchsParJournee; idx++) {
+    const dom  = document.getElementById(`m${idx}-dom`)?.value?.trim()  || '';
+    const ext  = document.getElementById(`m${idx}-ext`)?.value?.trim()  || '';
+    const dateV = document.getElementById(`m${idx}-date`)?.value        || '';
+    const sdom = document.getElementById(`m${idx}-sdom`)?.value;
+    const sext = document.getElementById(`m${idx}-sext`)?.value;
+
+    const ts = dateV ? new Date(dateV).getTime() : null;
+    if (ts && !premierTs) premierTs = ts;
+
+    const scoreReel = (sdom !== '' && sext !== '' && sdom !== undefined && sext !== undefined)
+      ? { dom: parseInt(sdom), ext: parseInt(sext) }
+      : null;
+
+    matchs.push({
+      domicile:  dom,
+      exterieur: ext,
+      date:      dateV ? formaterDate(dateV.slice(0,10), dateV.slice(11) + ':00') : '',
+      timestamp: ts,
+      scoreReel,
+      idApi: null,
+    });
+  }
+
+  // Deadline : champ manuel OU 1h avant le 1er match
+  const dlInput = document.getElementById('admin-deadline')?.value;
+  const deadline = dlInput
+    ? new Date(dlInput).getTime()
+    : premierTs ? premierTs - (CONFIG.regles.delaiAvantMatchMinutes * 60000) : null;
+
+  try {
+    const ref = dbSaison('journees', `j${j}`);
+    const snap = await ref.get();
+    const soumissions = snap.exists ? (snap.data().soumissions || {}) : {};
+    const statuts     = snap.exists ? (snap.data().statuts     || {}) : {};
+
+    await ref.set({ matchs, deadline, soumissions, statuts, valideAt: Date.now(), valideAdmin: true });
+
+    fermerModal();
+    showToast(`✅ Journée ${j} enregistrée !`, 'success');
+
+    // Mettre à jour la détection de journée courante
+    APP.journeeActive = await detecterJourneeCouranteFirestore().catch(() => APP.journeeActive);
+    const badge = document.getElementById('header-journee-badge');
+    if (badge) badge.textContent = `J.${APP.journeeActive}`;
+
+    chargerTab('grille');
+  } catch(e) {
+    console.error(e);
+    showToast('Erreur enregistrement', 'error');
+  }
 }
 
 async function saisirDeadline(j) {
