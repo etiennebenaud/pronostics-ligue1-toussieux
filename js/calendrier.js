@@ -1,3 +1,7 @@
+// Stockage temporaire des journées chargées (évite le passage JSON dans onclick)
+let _journeesChargees = {};
+let _saisonChargee = "";
+
 // ============================================================
 // CALENDRIER.JS — Scraping TheSportsDB + validation admin
 // API gratuite, sans clé, 9 matchs/journée, dates incluses
@@ -163,6 +167,8 @@ async function lancerChargementCalendrier() {
   btnCharger.textContent = '🔄 Recharger';
 
   // Afficher le tableau de validation
+  _journeesChargees = journeesChargees;
+  _saisonChargee = saisonInput;
   afficherValidationCalendrier(journeesChargees, saisonInput);
 }
 
@@ -336,4 +342,15 @@ async function detecterJourneeCouranteFirestore() {
     } catch(e) { break; }
   }
   return journeeTrouvee;
+}
+
+// ── Wrappers utilisant le stockage global (évite JSON dans onclick) ──
+async function validerToutesJourneesStockees() {
+  await validerToutesJournees(_journeesChargees, _saisonChargee);
+}
+
+async function validerJourneeStockee(numJ) {
+  const matchs = _journeesChargees[numJ];
+  if (!matchs) { showToast('Journée non trouvée en mémoire', 'error'); return; }
+  await validerJournee(numJ, matchs, _saisonChargee);
 }
