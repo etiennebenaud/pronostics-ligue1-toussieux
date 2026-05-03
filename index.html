@@ -93,6 +93,10 @@
           <span class="tab-icon">👤</span>
           <span class="tab-label">Profil</span>
         </button>
+        <button class="nav-tab" data-tab="palmares">
+          <span class="tab-icon">🏅</span>
+          <span class="tab-label">Palmarès</span>
+        </button>
         <button class="nav-tab" data-tab="admin" id="tab-admin-btn" style="display:none">
           <span class="tab-icon">⚙️</span>
           <span class="tab-label">Admin</span>
@@ -105,6 +109,21 @@
     <div id="tab-classement" class="section tab-content"></div>
     <div id="tab-bonus"      class="section tab-content"></div>
     <div id="tab-profil"     class="section tab-content"></div>
+    <div id="tab-palmares"   class="section tab-content"></div>
+
+    <!-- Indicateur saison archivée (visible si on consulte une saison passée) -->
+    <div id="saison-indicateur" style="display:none;position:fixed;bottom:16px;left:50%;
+         transform:translateX(-50%);background:#1F4E79;color:white;
+         padding:8px 16px;border-radius:20px;font-size:12px;font-weight:500;
+         box-shadow:0 2px 12px rgba(0,0,0,0.3);z-index:50;
+         align-items:center;gap:8px;white-space:nowrap">
+      <span class="saison-ind-label">📁 Saison archivée</span>
+      <button onclick="basculerSaison(saisonKey(CONFIG.saison))"
+        style="background:rgba(255,255,255,0.2);border:none;border-radius:10px;
+               color:white;padding:2px 8px;font-size:11px;cursor:pointer">
+        Retour saison en cours
+      </button>
+    </div>
     <div id="tab-admin"      class="section tab-content"></div>
 
   </div>
@@ -130,6 +149,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="config.js"></script>
 <script src="js/joueurs.js"></script>
+<script src="js/saisons.js"></script>
 <script src="js/app.js"></script>
 
 <script>
