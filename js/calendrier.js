@@ -53,7 +53,7 @@ function saisonApiFormat(s) {
 // ── Charger une journée depuis l'API ────────────────────────
 async function fetchJourneeAPI(numJournee, saisonLabel, tentative = 1) {
   const saison = saisonApiFormat(saisonLabel || CONFIG.saison);
-  const url = `https://www.thesportsdb.com/api/v1/json/3/eventsround.php` +
+  const url = `https://thesportsdb.com/api/v1/json/3/eventsround.php` +
               `?id=${SPORTSDB_LEAGUE}&r=${numJournee}&s=${saison}`;
   try {
     const resp = await fetch(url);
