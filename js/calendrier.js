@@ -206,9 +206,9 @@ async function lancerChargementCalendrier() {
   }
 
   progressBar.style.width = '100%';
-  if (vides > 0 && ok > 0) {
+  if (videsConsecutives > 0 && ok > 0) {
     progressLabel.textContent =
-      `✅ ${ok} journée(s) chargées — ${vides} non trouvée(s) (fin de saison ou matchs non programmés)`;
+      `✅ ${ok} journée(s) chargées — ${videsConsecutives} vide(s) (fin de saison ou matchs non programmés)`;
   } else {
     progressLabel.textContent = `✅ ${ok} journée(s) chargée(s)`;
   }
