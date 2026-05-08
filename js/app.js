@@ -697,118 +697,113 @@ function chargerBonus() {
 }
 
 function renderBonus(data,monId) {
+  const container = document.getElementById('tab-bonus');
+  if (!container) return;
+
   const mb  = monId ? (data[monId] || {}) : {};
-  const js  = !!data[`${monId}_soumis`];
+  const js  = !!data[monId + '_soumis'];
   const ro  = (js && !APP.estAdmin) ? 'readonly' : '';
-  // Liste dynamique depuis APP.equipesL1 (chargée depuis TheSportsDB au démarrage)
-  // Fallback sur une liste statique si pas encore chargée
+
+  // Liste équipes dynamique ou fallback statique
   const eq = (APP.equipesL1 && APP.equipesL1.length > 0)
     ? APP.equipesL1
     : ['Angers','Auxerre','Brest','Le Havre','Lens','Lille','Lorient',
        'Lyon','Marseille','Metz','Monaco','Montpellier','Nantes','Nice',
        'Paris FC','Paris SG','Rennes','Reims','Strasbourg','Toulouse'].sort();
 
-  const datalist = `<datalist id="eq-bonus-list">
-    ${eq.map(e => `<option value="${e}">`).join('')}
-  </datalist>`;
+  const datalist = '<datalist id="eq-bonus-list">' +
+    eq.map(e => '<option value="' + e + '">').join('') + '</datalist>';
 
-  const sectionHdr = (icon, titre, pts, bg, color) =>
-    `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;
-                 border-radius:var(--border-radius-md);margin-bottom:10px;
-                 background:${bg}">
-      <span style="font-size:16px">${icon}</span>
-      <span style="font-size:13px;font-weight:500;color:${color}">${titre}</span>
-      <span style="margin-left:auto;font-size:11px;font-weight:500;
-                   background:var(--color-background-primary);color:${color};
-                   padding:2px 8px;border-radius:20px">${pts}</span>
-    </div>`;
+  // En-tête de section coloré
+  function secHdr(icon, titre, pts, bg, color) {
+    return '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;' +
+           'border-radius:var(--border-radius-md);margin-bottom:10px;background:' + bg + '">' +
+           '<span style="font-size:16px">' + icon + '</span>' +
+           '<span style="font-size:13px;font-weight:500;color:' + color + '">' + titre + '</span>' +
+           '<span style="margin-left:auto;font-size:11px;font-weight:500;' +
+           'background:var(--color-background-primary);color:' + color + ';' +
+           'padding:2px 8px;border-radius:20px">' + pts + '</span></div>';
+  }
 
-  const inputField = (id, label, placeholder, type='text', extra='') =>
-    `<div style="display:flex;flex-direction:column;gap:2px">
-      <span style="font-size:11px;color:var(--color-text-secondary)">${label}</span>
-      <input list="eq-bonus-list" id="${id}" type="${type}" class="bonus-input"
-        value="${mb[id.replace('b-','')] || ''}"
-        placeholder="${placeholder}" ${ro} ${extra}>
-    </div>`;
+  // Champ de saisie
+  function inpF(id, label, placeholder, type) {
+    type = type || 'text';
+    var val = mb[id.replace('b-', '')] || '';
+    return '<div style="display:flex;flex-direction:column;gap:2px">' +
+           '<span style="font-size:11px;color:var(--color-text-secondary)">' + label + '</span>' +
+           '<input list="eq-bonus-list" id="' + id + '" type="' + type + '" class="bonus-input"' +
+           ' value="' + val + '" placeholder="' + placeholder + '" ' + ro + '></div>';
+  }
 
-  const soumisMsg = js
-    ? `<div style="background:var(--color-background-success);border-radius:var(--border-radius-md);
-                   padding:8px 12px;font-size:12px;color:var(--color-text-success);
-                   margin-bottom:14px;display:flex;align-items:center;gap:6px">
-        &#10003; Vos pronostics sont soumis et verrouillés.
-       </div>`
-    : `<p style="font-size:12px;color:var(--color-text-secondary);margin-bottom:14px;line-height:1.5">
-        Disponible à partir de la Journée ${CONFIG.regles.bonusSaisonDepuisJournee} · Soumis une seule fois, non modifiable
-       </p>`;
+  // Message statut
+  var statusMsg;
+  if (js) {
+    statusMsg = '<div style="background:var(--color-background-success);border-radius:8px;' +
+                'padding:8px 12px;font-size:12px;color:var(--color-text-success);' +
+                'margin-bottom:14px;display:flex;align-items:center;gap:6px">' +
+                '&#10003; Vos pronostics sont soumis et verrouilles.</div>';
+  } else {
+    statusMsg = '<p style="font-size:12px;color:var(--color-text-secondary);' +
+                'margin-bottom:14px;line-height:1.5">Disponible a partir de la Journee ' +
+                CONFIG.regles.bonusSaisonDepuisJournee +
+                ' - Soumis une seule fois, non modifiable</p>';
+  }
 
-  document.getElementById('tab-bonus').innerHTML = `
-    <div style="padding:16px">
-      ${datalist}
-      ${soumisMsg}
+  // Bouton soumettre
+  var btnSoumettre = (!js && monId)
+    ? '<button class="btn-soumettre" onclick="soumettreBonus()" style="margin-top:4px">' +
+      '&#10003; Soumettre mes pronostics de fin de saison</button>'
+    : '';
 
-      <!-- TOP 3 -->
-      <div style="margin-bottom:16px">
-        ${sectionHdr('&#127942;', 'Podium — Top 3', 'jusqu&#39;à 50 pts',
-          'var(--color-background-warning)', 'var(--color-text-warning)')}
+  // Construire le HTML
+  var html = '<div style="padding:16px">' + datalist + statusMsg;
 
-        <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;
-                    align-items:center;margin-bottom:8px">
-          <div style="width:28px;height:28px;border-radius:50%;background:#FFD700;
-                      color:#7B5C00;display:flex;align-items:center;justify-content:center;
-                      font-size:16px;flex-shrink:0">&#129351;</div>
-          ${inputField('b-champion', 'Champion — 1er', 'Équipe gagnante du titre')}
-        </div>
+  // TOP 3
+  html += '<div style="margin-bottom:16px">';
+  html += secHdr("&#127942;", "Podium - Top 3", "jusqu'a 50 pts",
+                 "var(--color-background-warning)", "var(--color-text-warning)");
+  html += '<div style="display:grid;grid-template-columns:28px 1fr;gap:8px;' +
+          'align-items:center;margin-bottom:8px">';
+  html += '<div style="width:28px;height:28px;border-radius:50%;background:#FFD700;' +
+          'color:#7B5C00;display:flex;align-items:center;justify-content:center;' +
+          'font-size:16px;flex-shrink:0">&#129351;</div>';
+  html += inpF('b-champion', 'Champion - 1er', 'Equipe gagnante du titre');
+  html += '</div>';
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-left:36px">';
+  html += inpF('b-top2', '&#129352; 2eme', 'Equipe');
+  html += inpF('b-top3', '&#129353; 3eme', 'Equipe');
+  html += '</div></div>';
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-left:36px">
-          ${inputField('b-top2', '&#129352; 2ème', 'Équipe')}
-          ${inputField('b-top3', '&#129353; 3ème', 'Équipe')}
-        </div>
-      </div>
+  // FLOP 3
+  html += '<div style="margin-bottom:16px">';
+  html += secHdr("&#128308;", "Relegation - Flop 3", "jusqu'a 25 pts",
+                 "var(--color-background-danger)", "var(--color-text-danger)");
+  html += '<div style="display:flex;flex-direction:column;gap:8px">';
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  html += inpF('b-flop1', 'Relegue 1', 'Equipe');
+  html += inpF('b-flop2', 'Relegue 2', 'Equipe');
+  html += '</div>';
+  html += '<div style="max-width:calc(50% - 4px)">';
+  html += inpF('b-flop3', 'Relegue 3', 'Equipe');
+  html += '</div></div></div>';
 
-      <!-- FLOP 3 -->
-      <div style="margin-bottom:16px">
-        ${sectionHdr('&#128308;', 'Relégation — Flop 3', 'jusqu&#39;à 25 pts',
-          'var(--color-background-danger)', 'var(--color-text-danger)')}
+  // BUTEUR
+  html += '<div style="margin-bottom:16px">';
+  html += secHdr("&#9917;", "Meilleur buteur", "jusqu'a 25 pts",
+                 "var(--color-background-info)", "var(--color-text-info)");
+  html += '<div style="display:grid;grid-template-columns:1fr 80px;gap:8px;align-items:end">';
+  html += '<div style="display:flex;flex-direction:column;gap:2px">';
+  html += '<span style="font-size:11px;color:var(--color-text-secondary)">Nom du joueur</span>';
+  html += '<input id="b-buteur" class="bonus-input" value="' + (mb.buteur || '') + '"' +
+          ' placeholder="Ex: Mbappe" ' + ro + ' style="font-size:13px"></div>';
+  html += '<div style="display:flex;flex-direction:column;gap:2px">';
+  html += '<span style="font-size:11px;color:var(--color-text-secondary)">Buts</span>';
+  html += '<input id="b-nbuts" type="number" class="bonus-input" value="' + (mb.nbuts || '') + '"' +
+          ' placeholder="22" min="0" max="60" ' + ro + ' style="font-size:13px;text-align:center"></div>';
+  html += '</div></div>';
 
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-            ${inputField('b-flop1', 'Relégué 1', 'Équipe')}
-            ${inputField('b-flop2', 'Relégué 2', 'Équipe')}
-          </div>
-          <div style="max-width:calc(50% - 4px)">
-            ${inputField('b-flop3', 'Relégué 3', 'Équipe')}
-          </div>
-        </div>
-      </div>
-
-      <!-- BUTEUR -->
-      <div style="margin-bottom:16px">
-        ${sectionHdr('&#9917;', 'Meilleur buteur', 'jusqu&#39;à 25 pts',
-          'var(--color-background-info)', 'var(--color-text-info)')}
-
-        <div style="display:grid;grid-template-columns:1fr 80px;gap:8px;align-items:end">
-          <div style="display:flex;flex-direction:column;gap:2px">
-            <span style="font-size:11px;color:var(--color-text-secondary)">Nom du joueur</span>
-            <input id="b-buteur" class="bonus-input"
-              value="${mb.buteur || ''}" placeholder="Ex: Mbappé" ${ro}
-              style="font-size:13px">
-          </div>
-          <div style="display:flex;flex-direction:column;gap:2px">
-            <span style="font-size:11px;color:var(--color-text-secondary)">Buts</span>
-            <input id="b-nbuts" type="number" class="bonus-input"
-              value="${mb.nbuts || ''}" placeholder="Ex: 22"
-              min="0" max="60" ${ro} style="font-size:13px;text-align:center">
-          </div>
-        </div>
-      </div>
-
-      ${!js && monId
-        ? `<button class="btn-soumettre" onclick="soumettreBonus()"
-             style="margin-top:4px">
-             &#10003; Soumettre mes pronostics de fin de saison
-           </button>`
-        : ''}
-    </div>`;
+  html += btnSoumettre + '</div>';
+  container.innerHTML = html;
 }
 
 
