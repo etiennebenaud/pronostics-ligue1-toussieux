@@ -13,6 +13,7 @@ const APP = {
 
 // ── Démarrage ────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  console.log('DOMContentLoaded déclenché');
   document.documentElement.style.setProperty('--orange', CONFIG.theme.couleurPrimaire);
   document.documentElement.style.setProperty('--bleu',   CONFIG.theme.couleurSecondaire);
   document.documentElement.style.setProperty('--vert',   CONFIG.theme.couleurVert);
@@ -23,6 +24,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.title = CONFIG.theme.nomApp;
 
   initFirebase();
+  console.log('Après initFirebase - APP.db:', !!APP.db);
 
   // Restaurer session
   const savedAdmin = localStorage.getItem('pronostics_admin');
@@ -62,14 +64,28 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 function initFirebase() {
   try {
-    firebase.initializeApp(CONFIG.firebase);
+    // Vérifier si une app Firebase existe déjà
+    const existingApp = firebase.apps && firebase.apps.length > 0
+      ? firebase.apps[0]
+      : firebase.initializeApp(CONFIG.firebase);
     APP.db = firebase.firestore();
     APP.db.enablePersistence({ synchronizeTabs: true }).catch(() => {});
-  } catch(e) { console.error('Firebase:', e); }
+    console.log('Firebase OK - db:', !!APP.db);
+  } catch(e) {
+    console.error('Firebase init error:', e);
+    // Tenter de récupérer l'app existante
+    try {
+      APP.db = firebase.firestore();
+      console.log('Firebase récupéré - db:', !!APP.db);
+    } catch(e2) {
+      console.error('Firebase récupération impossible:', e2);
+    }
+  }
 }
 
 // ── Login ────────────────────────────────────────────────────
 function afficherLogin() {
+  console.log('afficherLogin appelé');
   document.getElementById('section-login').style.display = 'flex';
   document.getElementById('section-app').style.display   = 'none';
   setTimeout(() => document.getElementById('login-input')?.focus(), 100);
@@ -77,7 +93,19 @@ function afficherLogin() {
 
 
 async function traiterConnexion(code) {
+  console.log('traiterConnexion:', code, '| APP.db:', !!APP.db);
   if (!code) return;
+
+  // Guard : si Firebase pas initialisé, réessayer
+  if (!APP.db) {
+    console.warn('APP.db null, réinitialisation Firebase...');
+    initFirebase();
+    if (!APP.db) {
+      showToast('Erreur de connexion Firebase. Rechargez la page.', 'error');
+      return;
+    }
+  }
+
   if (code === CONFIG.codeAdmin.toUpperCase()) {
     APP.estAdmin = true; APP.joueurActif = null;
     localStorage.setItem('pronostics_admin', '1');
@@ -85,6 +113,7 @@ async function traiterConnexion(code) {
     await demarrerApp(); showToast('Mode admin activé 🔧', 'warning'); return;
   }
   await initJoueurs();
+  console.log('Joueurs chargés:', APP.joueurs.length, APP.joueurs.map(j=>j.code));
   const joueur = APP.joueurs.find(j => j.code.toUpperCase() === code);
   if (joueur) {
     APP.joueurActif = joueur; APP.estAdmin = false;
@@ -738,7 +767,7 @@ function renderBonus(data,monId) {
 
       <!-- FLOP 3 -->
       <div style="margin-bottom:16px">
-        ${sectionHdr('&#128308;', 'Relégation — Flop 3', 'jusqu'à 25 pts',
+        ${sectionHdr('&#128308;', 'Relégation — Flop 3', 'jusqu&#39;à 25 pts',
           'var(--color-background-danger)', 'var(--color-text-danger)')}
 
         <div style="display:flex;flex-direction:column;gap:8px">
@@ -754,7 +783,7 @@ function renderBonus(data,monId) {
 
       <!-- BUTEUR -->
       <div style="margin-bottom:16px">
-        ${sectionHdr('&#9917;', 'Meilleur buteur', 'jusqu'à 25 pts',
+        ${sectionHdr('&#9917;', 'Meilleur buteur', 'jusqu&#39;à 25 pts',
           'var(--color-background-info)', 'var(--color-text-info)')}
 
         <div style="display:grid;grid-template-columns:1fr 80px;gap:8px;align-items:end">
