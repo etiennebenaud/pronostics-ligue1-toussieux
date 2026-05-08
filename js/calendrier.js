@@ -165,31 +165,44 @@ async function lancerChargementCalendrier() {
 
   const total = fin - debut + 1;
   const journeesChargees = {};
-  let ok = 0, vides = 0;
+  let ok = 0, videsConsecutives = 0;
 
   for (let j = debut; j <= fin; j++) {
-    progressLabel.textContent = `Chargement J${j}... (${j-debut}/${total})`;
-    progressBar.style.width = `${Math.round((j-debut)/total*100)}%`;
+    progressLabel.textContent = `Chargement J${j}... (${j - debut}/${total})`;
+    progressBar.style.width = `${Math.round((j - debut) / total * 100)}%`;
 
-    const matchs = await fetchJourneeAPI(j, saisonInput);
+    // Retry : jusqu'à 3 tentatives par journée en cas d'erreur
+    let matchs = null;
+    for (let tentative = 1; tentative <= 3; tentative++) {
+      matchs = await fetchJourneeAPI(j, saisonInput);
+      if (matchs !== null) break; // null = erreur réseau → retry
+      if (tentative < 3) {
+        progressLabel.textContent = `J${j} — retry ${tentative}/3...`;
+        await new Promise(r => setTimeout(r, 1500 * tentative));
+      }
+    }
+
     if (matchs && matchs.length > 0) {
       journeesChargees[j] = matchs;
       ok++;
-    } else if (matchs === null) {
-      // Erreur réseau
-      vides++;
+      videsConsecutives = 0; // reset compteur
+    } else if (!matchs) {
+      // Erreur réseau persistante après 3 tentatives
+      progressLabel.textContent = `⚠️ J${j} inaccessible après 3 tentatives — ignorée`;
+      videsConsecutives++;
     } else {
-      // Journée vide = fin de saison atteinte (ex: L1 s'arrête à J34)
-      vides++;
-      // Si plusieurs journées vides consécutives → arrêt automatique
-      if (vides >= 3 && ok > 0) {
+      // Journée vide (matchs=[]) = fin de saison possible
+      videsConsecutives++;
+      if (videsConsecutives >= 4 && ok > 0) {
         progressLabel.textContent =
-          `ℹ️ Arrêt à J${j-1} — fin de saison détectée (${ok} journées chargées)`;
+          `ℹ️ Arrêt à J${j - 1} — fin de saison détectée (${ok} journées chargées)`;
         break;
       }
     }
-    // Pause anti-rate-limit
-    await new Promise(r => setTimeout(r, 600)); // délai anti-rate-limit
+
+    // Délai anti-rate-limit : plus long en fin de chargement
+    const delai = ok > 20 ? 1000 : 700;
+    await new Promise(r => setTimeout(r, delai));
   }
 
   progressBar.style.width = '100%';
