@@ -719,7 +719,7 @@ function renderBonus(data,monId) {
 
       <!-- TOP 3 -->
       <div style="margin-bottom:16px">
-        ${sectionHdr('&#127942;', 'Podium — Top 3', 'jusqu'à 50 pts',
+        ${sectionHdr('&#127942;', 'Podium — Top 3', 'jusqu&#39;à 50 pts',
           'var(--color-background-warning)', 'var(--color-text-warning)')}
 
         <div style="display:grid;grid-template-columns:28px 1fr;gap:8px;
