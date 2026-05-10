@@ -55,8 +55,8 @@ async function fetchJourneeAPI(numJournee, saisonLabel, tentative = 1) {
   const saison = saisonApiFormat(saisonLabel || CONFIG.saison);
   // Essayer sans www d'abord, puis avec www en fallback
   const urls = [
-    `https://thesportsdb.com/api/v1/json/3/eventsround.php?id=${SPORTSDB_LEAGUE}&r=${numJournee}&s=${saison}`,
     `https://www.thesportsdb.com/api/v1/json/3/eventsround.php?id=${SPORTSDB_LEAGUE}&r=${numJournee}&s=${saison}`,
+    `https://thesportsdb.com/api/v1/json/3/eventsround.php?id=${SPORTSDB_LEAGUE}&r=${numJournee}&s=${saison}`,
   ];
   const url = urls[(tentative - 1) % urls.length];
   try {
