@@ -742,6 +742,12 @@ function calculerPointsJournee(soumissions, matchs, joueurId) {
 // ── Résultats ─────────────────────────────────────────────────
 function chargerResultats() {
   document.getElementById('tab-resultats').innerHTML = '<div style="padding:16px">'
+    + '<button onclick="rafraichirScoresESPN(' + APP.journeeActive + ')"'
+    + ' id="btn-refresh-scores"'
+    + ' style="width:100%;padding:10px;background:var(--bleu);color:white;border:none;'
+    + 'border-radius:10px;font-size:13px;font-weight:500;cursor:pointer;margin-bottom:10px;'
+    + 'display:flex;align-items:center;justify-content:center;gap:6px">'
+    + '🔄 Rafraîchir les scores depuis ESPN</button>'
     + '<div class="journee-nav">'
     + '<button onclick="changerJourneeR(-1)" ' + (APP.journeeActive<=1?'disabled':'') + '>‹</button>'
     + '<div style="display:flex;flex-direction:column;align-items:center;gap:4px;position:relative">'
@@ -976,55 +982,72 @@ function renderResultats(j, data) {
     });
   }
 
-  // Classement journée
-  const joueursTries = APP.joueurs
-    .filter(jo => soumissions[jo.id])
+  // Classement journée — tous les joueurs, même sans pronostic
+  // Les non-soumis ont déjà leurs points par défaut dans totaux (calculés ci-dessus)
+  // Si les scores ne sont pas encore tous là, on affiche quand même avec les pts actuels
+
+  const tousJoueursTriees = APP.joueurs.slice()
     .sort((a, b) => (totaux[b.id] || 0) - (totaux[a.id] || 0));
 
-  if (joueursTries.length > 0) {
+  // Toujours afficher le classement (même journée vide = tous à 0)
+  {
     const monId2 = APP.joueurActif?.id;
-    html += '<div class="card mt-12"><div class="card-title">📊 Classement Journée ' + j + '</div>';
-
     const medals = { 1:'🥇', 2:'🥈', 3:'🥉' };
     let ptsPrecedents = -1, rangCourant = 1;
 
-    joueursTries.forEach((jo, i) => {
-      const pts  = totaux[jo.id] || 0;
-      const rang = (pts !== ptsPrecedents) ? i + 1 : rangCourant;
+    // Indicateur si points par défaut appliqués
+    const avecPtsDefaut = tousScores2 && APP.joueurs.some(jo => !soumissions[jo.id]);
+    const ptsDefautVal  = avecPtsDefaut
+      ? calculerPointsDefaut(Object.fromEntries(
+          APP.joueurs.filter(jo => soumissions[jo.id]).map(jo => [jo.id, totaux[jo.id]])
+        ))
+      : 0;
+
+    html += '<div class="card mt-12">';
+    html += '<div class="card-title">📊 Classement Journée ' + j + '</div>';
+
+    if (avecPtsDefaut && ptsDefautVal > 0) {
+      html += '<p class="text-sm text-muted" style="margin-bottom:8px">'
+        + '⚙️ Non-soumis : ' + ptsDefautVal + ' pts par défaut (moitié du minimum)</p>';
+    }
+    if (!tousScores2 && tousJoueursTriees.some(jo => soumissions[jo.id])) {
+      html += '<p class="text-sm text-muted" style="margin-bottom:8px">'
+        + '⏳ Scores incomplets — classement provisoire</p>';
+    }
+
+    tousJoueursTriees.forEach((jo, i) => {
+      const pts       = totaux[jo.id] || 0;
+      const aSoumis   = !!soumissions[jo.id];
+      const estTardif = data.statuts?.[jo.id]?.tardif === true;
+      const rang      = (pts !== ptsPrecedents) ? i + 1 : rangCourant;
       rangCourant = rang; ptsPrecedents = pts;
-      const gain  = afficherPtsGains
+
+      const gain = afficherPtsGains
         ? ([CONFIG.gains.premier, CONFIG.gains.deuxieme, CONFIG.gains.troisieme][rang - 1] || 0)
         : 0;
-      const isMe  = jo.id === monId2;
-      const rangClass = rang <= 3 ? 'rang-' + rang : 'rang-other';
-      const gainHtml  = (afficherPtsGains && gain > 0)
-        ? '<div class="classement-gains">+' + gain + '€</div>'
-        : '<div></div>';
+      const isMe = jo.id === monId2;
 
-      html += '<div class="classement-row' + (isMe ? ' moi' : '') + '">'
-            + '<div class="rang-badge ' + rangClass + '">' + (medals[rang] || rang) + '</div>'
-            + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + '</div>'
-            + '<div class="classement-pts">' + pts + '<span>pts</span></div>'
-            + gainHtml
-            + '</div>';
-    });
+      // Badge rang
+      const rangClass = (aSoumis && rang <= 3) ? 'rang-' + rang : 'rang-other';
+      const rangLabel = (aSoumis && medals[rang]) ? medals[rang] : rang;
 
-    // Joueurs n'ayant pas soumis
-    APP.joueurs.filter(jo => !soumissions[jo.id]).forEach(jo => {
-      html += '<div class="classement-row" style="opacity:0.35">'
-            + '<div class="rang-badge rang-other">—</div>'
-            + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + '</div>'
-            + '<div class="classement-pts">—<span>ns</span></div>'
-            + '<div></div></div>';
+      // Sous-label pour non-soumis ou tardif
+      const subLabel = !aSoumis
+        ? (tousScores2 ? '<br><small style="color:var(--gris)">par défaut</small>' : '')
+        : (estTardif ? '<br><small style="color:var(--or)">⚠️ tardif</small>' : '');
+
+      html += '<div class="classement-row' + (isMe ? ' moi' : '') + '"'
+        + (!aSoumis && !tousScores2 ? ' style="opacity:0.45"' : '') + '>'
+        + '<div class="rang-badge ' + rangClass + '">' + rangLabel + '</div>'
+        + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + '</div>'
+        + '<div class="classement-pts">' + pts + subLabel + '<span>pts</span></div>'
+        + (afficherPtsGains && gain > 0 ? '<div class="classement-gains">+' + gain + '€</div>' : '<div></div>')
+        + '</div>';
     });
 
     html += '</div>';
-
-  } else if (journeeFermee) {
-    html += '<div class="card mt-12" style="background:var(--gris-l);border:none">'
-          + '<p class="text-sm text-muted text-center" style="padding:4px 0">'
-          + '📁 Journée archivée — scores en lecture seule</p></div>';
   }
+
   const rc = document.getElementById('resultats-content');
   if (rc) rc.innerHTML = html;
 }
@@ -1044,39 +1067,26 @@ async function saisirScore(j,idx,cote,val) {
 // ── Classement ────────────────────────────────────────────────
 function chargerClassement() {
   const container = document.getElementById('tab-classement');
+  const saison = saisonLabel(APP.saisonAffichee || saisonKey(CONFIG.saison));
+  const avecBonus = APP.journeeActive >= CONFIG.regles.bonusSaisonDepuisJournee;
+
   container.innerHTML = '<div style="padding:16px">'
-    + '<div style="display:flex;align-items:center;justify-content:space-between;'
-    + 'margin-bottom:16px;background:#1F4E79;border-radius:12px;padding:10px 14px;">'
-    + '<button onclick="changerTypeClassement(-1)" id="cl-prev"'
-    + ' style="background:rgba(255,255,255,0.15);border:none;color:white;'
-    + 'width:32px;height:32px;border-radius:50%;font-size:16px;cursor:pointer">‹</button>'
-    + '<div style="position:relative;text-align:center">'
-    + '<div onclick="toggleSelectClassement()" id="classement-display"'
-    + ' style="font-size:14px;font-weight:700;color:white;cursor:pointer;'
-    + 'display:flex;align-items:center;gap:6px;padding:4px 10px;'
-    + 'border-radius:8px;background:rgba(255,255,255,0.1)">'
-    + '<span id="classement-display-text">🏆 Saison complète</span>'
-    + '<span style="font-size:10px;opacity:0.7">▾</span></div>'
-    + '<div id="classement-dropdown" style="display:none;position:absolute;top:36px;left:50%;'
-    + 'transform:translateX(-50%);background:#1F4E79;border-radius:10px;'
-    + 'box-shadow:0 4px 20px rgba(0,0,0,0.4);z-index:200;'
-    + 'max-height:240px;overflow-y:auto;min-width:160px;'
-    + 'border:1px solid rgba(255,255,255,0.15)">'
-    + genOptionsClassementHTML('saison', CONFIG.nbJournees)
-    + '</div>'
-    + '<div style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:2px" id="cl-subtitle"></div>'
-    + '</div>'
-    + '<button onclick="changerTypeClassement(1)" id="cl-next"'
-    + ' style="background:rgba(255,255,255,0.15);border:none;color:white;'
-    + 'width:32px;height:32px;border-radius:50%;font-size:16px;cursor:pointer">›</button>'
-    + '</div>'
+    + (avecBonus
+      ? '<label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;'
+        + 'padding:10px 14px;background:var(--or-l);border:1px solid var(--or);'
+        + 'border-radius:10px;margin-bottom:14px">'
+        + '<input type="checkbox" id="cl-avec-bonus" onchange="chargerClassementSaison()"'
+        + ' style="width:16px;height:16px;cursor:pointer">'
+        + '<div><div style="font-weight:600;color:var(--or)">Inclure les bonus fin de saison</div>'
+        + '<div class="text-sm" style="color:var(--gris)">Charge le classement réel + meilleur buteur depuis ESPN</div>'
+        + '</div></label>'
+      : '')
     + '<div id="classement-content"><div class="loading"><div class="spinner"></div>Calcul...</div></div>'
     + '</div>';
 
-  APP._classementSelection = 'saison';
-  updateNavClassement();
   chargerClassementSaison();
 }
+
 
 function genOptionsClassementHTML(active, total) {
   const isSaison = active === 'saison';
@@ -1175,9 +1185,11 @@ function chargerClassementSaison() {
   const container = document.getElementById('classement-content');
   if (container) container.innerHTML = '<div class="loading"><div class="spinner"></div>Calcul...</div>';
 
+  const avecBonus = document.getElementById('cl-avec-bonus')?.checked || false;
+
   Promise.all(Array.from({length: CONFIG.nbJournees}, (_, i) =>
     dbSaison('journees', `j${i+1}`).get()
-  )).then(snaps => {
+  )).then(async snaps => {
     const totaux = Object.fromEntries(APP.joueurs.map(jo => [jo.id, { pts: 0, gains: 0 }]));
 
     snaps.forEach(snap => {
@@ -1190,12 +1202,27 @@ function chargerClassementSaison() {
           if (k.startsWith('soumissions.')) soumissions[k.replace('soumissions.','')] = snapData[k];
         });
       }
+      const statuts = snapData.statuts || {};
 
       const ptsJ = Object.fromEntries(APP.joueurs.map(jo => [jo.id,
-        matchs.reduce((acc, match, idx) => {
-          const p = soumissions[jo.id]?.[idx];
+        matchs.reduce((acc, match, idx2) => {
+          const p = soumissions[jo.id]?.[idx2];
           return acc + (p && match.scoreReel ? calculerPoints(p, match.scoreReel) || 0 : 0);
         }, 0)]));
+
+      // Appliquer pénalités tardives
+      APP.joueurs.forEach(jo => {
+        const st = statuts[jo.id];
+        if (st?.tardif && st?.penalite) ptsJ[jo.id] = Math.max(0, ptsJ[jo.id] + st.penalite);
+      });
+
+      // Points par défaut pour non-soumis si tous les scores sont rentrés
+      const tousScores = matchs.length > 0 && matchs.every(m => m.scoreReel !== null);
+      if (tousScores) {
+        const soumettants = Object.fromEntries(APP.joueurs.filter(jo => soumissions[jo.id]).map(jo => [jo.id, ptsJ[jo.id]]));
+        const def = calculerPointsDefaut(soumettants);
+        APP.joueurs.forEach(jo => { if (!soumissions[jo.id]) ptsJ[jo.id] = def; });
+      }
 
       const sorted = APP.joueurs.slice().sort((a, b) => ptsJ[b.id] - ptsJ[a.id]);
       APP.joueurs.forEach(jo => { totaux[jo.id].pts += ptsJ[jo.id]; });
@@ -1204,16 +1231,105 @@ function chargerClassementSaison() {
       if (sorted[2] && ptsJ[sorted[2].id] > 0) totaux[sorted[2].id].gains += CONFIG.gains.troisieme;
     });
 
-    const sorted = APP.joueurs.slice().sort((a, b) => totaux[b.id].pts - totaux[a.id].pts);
-    const monId  = APP.joueurActif?.id;
-    let html = '<div class="card"><div class="card-title">🏆 Classement général — ' + saisonLabel(APP.saisonAffichee || saisonKey(CONFIG.saison)) + '</div>';
+    // ── Bonus fin de saison (optionnel, via ESPN) ────────────
+    let bonusData = null;
+    let classementReel = null;
+    let buteurReel = null;
+
+    if (avecBonus) {
+      try {
+        // Charger les pronostics bonus depuis Firebase
+        const bonusSnap = await dbSaison('bonus', 'saison').get();
+        bonusData = bonusSnap.exists ? bonusSnap.data() : {};
+
+        // Charger le classement réel depuis ESPN
+        const r = await fetch('https://site.api.espn.com/apis/v2/sports/soccer/fra.1/standings?season=2026');
+        const d = await r.json();
+        classementReel = (d.children?.[0]?.standings?.entries || [])
+          .map((e, i) => ({ rang: i+1, nom: e.team?.displayName, abbr: e.team?.abbreviation }));
+
+        // Charger le buteur depuis ESPN scoreboard récent
+        const r2 = await fetch('https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard?dates=20250801-20260531&limit=500');
+        const d2 = await r2.json();
+        // Trouver le meilleur buteur via les stats des events
+        const scorers = {};
+        (d2.events || []).forEach(ev => {
+          (ev.competitions?.[0]?.details || []).forEach(detail => {
+            if (detail.type?.text === 'Goal' && detail.athletesInvolved?.[0]) {
+              const name = detail.athletesInvolved[0].displayName;
+              scorers[name] = (scorers[name] || 0) + 1;
+            }
+          });
+        });
+        const topScorer = Object.entries(scorers).sort((a,b) => b[1]-a[1])[0];
+        buteurReel = topScorer ? { nom: topScorer[0], buts: topScorer[1] } : null;
+
+      } catch(e) {
+        console.warn('ESPN bonus:', e);
+      }
+
+      // Calculer les points bonus pour chaque joueur
+      if (bonusData && classementReel) {
+        APP.joueurs.forEach(jo => {
+          const b = bonusData[jo.id];
+          if (!b) return;
+          let bonusPts = 0;
+
+          const top3Reel = classementReel.slice(0,3).map(e => e.nom);
+          const flop3Reel = classementReel.slice(-3).map(e => e.nom);
+
+          // Champion
+          if (b.champion && top3Reel[0] && b.champion.toLowerCase().includes(top3Reel[0].toLowerCase().split(' ')[0]))
+            bonusPts += CONFIG.bonusSaison.champion;
+
+          // Top 3 dans l'ordre
+          const topProno = [b.champion, b.top2, b.top3].filter(Boolean);
+          const matchTop = topProno.filter((t,i) => t && top3Reel[i] && t.toLowerCase().includes(top3Reel[i].toLowerCase().split(' ')[0]));
+          if (matchTop.length === 3) bonusPts += CONFIG.bonusSaison.top3Ordre;
+          else if (matchTop.length >= 2) bonusPts += CONFIG.bonusSaison.top2sur3;
+
+          // Flop 3
+          const flopProno = [b.flop1, b.flop2, b.flop3].filter(Boolean);
+          const matchFlop = flopProno.filter(f => flop3Reel.some(r => f && r.toLowerCase().includes(f.toLowerCase().split(' ')[0])));
+          if (matchFlop.length === 3) bonusPts += CONFIG.bonusSaison.flop3Ordre;
+          else if (matchFlop.length >= 2) bonusPts += CONFIG.bonusSaison.flop2sur3;
+
+          // Buteur
+          if (buteurReel && b.buteur && buteurReel.nom.toLowerCase().includes(b.buteur.toLowerCase().split(' ')[0])) {
+            bonusPts += CONFIG.bonusSaison.buteur;
+            if (b.nbuts && parseInt(b.nbuts) === buteurReel.buts) bonusPts += CONFIG.bonusSaison.nbuts;
+          }
+
+          totaux[jo.id].pts += bonusPts;
+          totaux[jo.id].bonusPts = bonusPts;
+        });
+      }
+    }
+
+    // ── Affichage ────────────────────────────────────────────
+    const sorted  = APP.joueurs.slice().sort((a, b) => totaux[b.id].pts - totaux[a.id].pts);
+    const monId   = APP.joueurActif?.id;
+    const saison  = saisonLabel(APP.saisonAffichee || saisonKey(CONFIG.saison));
+
+    let html = '<div class="card">';
+    html += '<div class="card-title">🏆 Classement général — ' + saison + '</div>';
+
+    if (avecBonus && buteurReel) {
+      html += '<div style="background:var(--bleu-l);border-radius:8px;padding:8px 12px;'
+        + 'margin-bottom:10px;font-size:12px;color:var(--bleu)">'
+        + '⚽ Meilleur buteur ESPN : <strong>' + buteurReel.nom + '</strong> ('
+        + buteurReel.buts + ' buts)</div>';
+    }
+
     sorted.forEach((jo, i) => {
       const r = i + 1;
+      const bonus = avecBonus && totaux[jo.id].bonusPts ? ' +' + totaux[jo.id].bonusPts + 'b' : '';
       html += '<div class="classement-row' + (jo.id === monId ? ' moi' : '') + '">'
-        + '<div class="rang-badge ' + (r <= 3 ? 'rang-' + r : 'rang-other') + '">'
-        + (r <= 3 ? ['🥇','🥈','🥉'][i] : r) + '</div>'
+        + '<div class="rang-badge ' + (r<=3?'rang-'+r:'rang-other') + '">'
+        + (r<=3?['🥇','🥈','🥉'][i]:r) + '</div>'
         + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + '</div>'
-        + '<div class="classement-pts">' + totaux[jo.id].pts + '<span>pts</span></div>'
+        + '<div class="classement-pts">' + totaux[jo.id].pts
+        + '<span>pts' + bonus + '</span></div>'
         + '<div class="classement-gains">' + totaux[jo.id].gains + '€</div>'
         + '</div>';
     });
@@ -1224,6 +1340,7 @@ function chargerClassementSaison() {
     if (container) container.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><p>Erreur</p></div>';
   });
 }
+
 
 function chargerClassementJournee(j) {
   const container = document.getElementById('classement-content');
@@ -1720,3 +1837,93 @@ function sauverDelaiReouverture(val) {
   CONFIG.regles.delaiReouvretureHeures = val;
   showToast('Délai mis à jour (non permanent — modifiez config.js)', 'warning');
 }
+
+// ── Rafraîchir les scores depuis ESPN ────────────────────────
+async function rafraichirScoresESPN(j) {
+  const btn = document.getElementById('btn-refresh-scores');
+  if (btn) { btn.textContent = '⏳ Chargement...'; btn.disabled = true; }
+
+  try {
+    // Charger les matchs de la journée depuis Firebase pour avoir les dates
+    const snap = await dbSaison('journees', `j${j}`).get();
+    if (!snap.exists) { showToast('Journée non trouvée', 'error'); return; }
+    const data   = snap.data();
+    const matchs = data.matchs || [];
+
+    // Trouver la plage de dates de la journée
+    const timestamps = matchs.filter(m => m.timestamp).map(m => m.timestamp);
+    if (timestamps.length === 0) {
+      showToast('Pas de dates disponibles pour cette journée', 'warning');
+      return;
+    }
+
+    const dateMin = new Date(Math.min(...timestamps));
+    const dateMax = new Date(Math.max(...timestamps) + 7200000); // +2h pour les matchs longs
+    const fmt = d => d.toISOString().slice(0,10).replace(/-/g,'');
+    const url = 'https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard'
+              + '?dates=' + fmt(dateMin) + '-' + fmt(dateMax);
+
+    const resp   = await fetch(url);
+    const espnData = await resp.json();
+    const events = espnData.events || [];
+
+    if (events.length === 0) {
+      showToast('Aucun match trouvé sur ESPN pour cette période', 'warning');
+      return;
+    }
+
+    // Mapper les scores ESPN sur les matchs Firebase
+    let mises_a_jour = 0;
+    const matchsUpdated = matchs.map(match => {
+      // Chercher le match ESPN correspondant (par nom d'équipe)
+      const espnEvent = events.find(ev => {
+        const teams = ev.competitions?.[0]?.competitors || [];
+        const home  = teams[0]?.team?.displayName || '';
+        const away  = teams[1]?.team?.displayName || '';
+        // Correspondance partielle (ESPN et Firebase peuvent avoir des noms légèrement différents)
+        return (home.toLowerCase().includes(match.domicile?.toLowerCase().split(' ')[0] || 'xxx')
+             || match.domicile?.toLowerCase().includes(home.toLowerCase().split(' ')[0] || 'xxx'))
+            && (away.toLowerCase().includes(match.exterieur?.toLowerCase().split(' ')[0] || 'xxx')
+             || match.exterieur?.toLowerCase().includes(away.toLowerCase().split(' ')[0] || 'xxx'));
+      });
+
+      if (!espnEvent) return match;
+
+      const comp  = espnEvent.competitions?.[0];
+      const teams = comp?.competitors || [];
+      const scoreHome = teams[0]?.score;
+      const scoreAway = teams[1]?.score;
+      const completed = comp?.status?.type?.completed;
+      const inProgress = comp?.status?.type?.name === 'STATUS_IN_PROGRESS'
+                      || comp?.status?.type?.name === 'STATUS_HALFTIME';
+
+      if ((completed || inProgress) && scoreHome !== undefined && scoreHome !== null && scoreHome !== '') {
+        mises_a_jour++;
+        return {
+          ...match,
+          scoreReel: { dom: parseInt(scoreHome), ext: parseInt(scoreAway) },
+          scoreEnCours: inProgress && !completed,
+          statutMatch: comp?.status?.displayClock || '',
+        };
+      }
+      return match;
+    });
+
+    // Sauvegarder dans Firebase
+    await dbSaison('journees', `j${j}`).set({ ...data, matchs: matchsUpdated }, { merge: false });
+
+    const msg = mises_a_jour > 0
+      ? '✅ ' + mises_a_jour + ' score(s) mis à jour depuis ESPN'
+      : '⚠️ Aucun score disponible pour l&#39;instant';
+    showToast(msg, mises_a_jour > 0 ? 'success' : 'warning');
+    chargerTab('resultats');
+
+  } catch(e) {
+    console.error('rafraichirScoresESPN:', e);
+    showToast('Erreur ESPN : ' + e.message, 'error');
+  } finally {
+    const btn2 = document.getElementById('btn-refresh-scores');
+    if (btn2) { btn2.textContent = '🔄 Rafraîchir les scores depuis ESPN'; btn2.disabled = false; }
+  }
+}
+
