@@ -8,6 +8,7 @@ const APP = {
   ecouteurs: [], deferredInstall: null,
   saisonAffichee: null,  // null = saison courante
   listeSaisons: [],
+  saisonEstCloturee: false, // true si la saison affichée est clôturée
   equipesL1: [],  // chargées dynamiquement depuis TheSportsDB
 };
 
@@ -155,6 +156,8 @@ async function demarrerApp() {
   }
   APP.journeeActive  = CONFIG.regles.journeeDefaut > 0 ? CONFIG.regles.journeeDefaut : 1;
   APP.saisonAffichee = saisonKey(CONFIG.saison);
+  // La saison courante n'est jamais clôturée par définition
+  APP.saisonEstCloturee = false;
   await chargerListeSaisons();
   await initialiserSaison(APP.saisonAffichee);
   // Charger les équipes en arrière-plan (non-bloquant)
@@ -387,7 +390,9 @@ function renderGrille(j, data) {
   const monId = APP.joueurActif?.id;
   const jaiSoumis  = monId ? !!soumissions[monId] : false;
   const peutVoir   = APP.estAdmin || jaiSoumis;
-  const saisonRO   = !estSaisonCourante(); // lecture seule si saison archivée
+  // Lecture seule si saison CLÔTURÉE (pas juste si différente de la courante)
+  // Une saison non courante mais non clôturée reste modifiable
+  const saisonRO = APP.saisonEstCloturee === true;
 
   const mc = document.getElementById('grille-matchs');
   if (!mc) return;
