@@ -350,23 +350,29 @@ async function sauverInfosChampionnat(saisonKey_) {
 // ── Basculer vers une saison ──────────────────────────────
 function basculerSaison(key) {
   APP.saisonAffichee = key;
-  // Mettre à jour le badge J.X dans le header
-  const badge = document.getElementById('header-saison-badge');
-  if (badge) badge.textContent = saisonLabel(key);
-  // Afficher un indicateur si saison archivée
+
+  // Mettre à jour le span #header-saison
+  const hSaison = document.getElementById('header-saison');
+  if (hSaison) hSaison.textContent = saisonLabel(key);
+
+  // Bandeau saison archivée dans le header
   const indicateur = document.getElementById('saison-indicateur');
   if (indicateur) {
     if (!estSaisonCourante()) {
       indicateur.style.display = 'flex';
-      indicateur.querySelector('.saison-ind-label').textContent =
-        `📁 Saison archivée : ${saisonLabel(key)}`;
+      const lbl = indicateur.querySelector('.saison-ind-label');
+      if (lbl) lbl.textContent = `Consultation saison ${saisonLabel(key)} (archivée)`;
     } else {
       indicateur.style.display = 'none';
+      // Restaurer la saison courante dans le header
+      const hS = document.getElementById('header-saison');
+      if (hS) hS.textContent = CONFIG.saison;
     }
   }
+
   // Recharger l'onglet actif
   chargerTab('palmares');
-  showToast(`Affichage : saison ${saisonLabel(key)}`, 'default');
+  showToast(`Saison ${saisonLabel(key)} ${estSaisonCourante() ? '(en cours)' : '(archivée)'}`, 'default');
 }
 
 // ── Créer une nouvelle saison (admin) ─────────────────────
