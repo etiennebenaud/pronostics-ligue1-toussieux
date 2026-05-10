@@ -335,9 +335,7 @@ function chargerGrille() {
                    font-weight:700;text-align:center;cursor:pointer;outline:none;
                    appearance:none;-webkit-appearance:none;padding:0 4px;
                    max-width:160px">
-            ${Array.from({length: CONFIG.nbJournees}, (_, i) => i + 1)
-              .map(j => `<option value="${j}" ${j === APP.journeeActive ? 'selected' : ''}
-                style="background:#1F4E79;color:white">Journée ${j}</option>`).join('')}
+            ${genOptionsJournees(APP.journeeActive, CONFIG.nbJournees)}
           </select>
           <div class="journee-deadline" id="deadline-label">Chargement...</div>
         </div>
@@ -350,6 +348,15 @@ function chargerGrille() {
   const unsub = dbSaison('journees', `j${APP.journeeActive}`)
     .onSnapshot(snap => renderGrille(APP.journeeActive, snap.exists ? snap.data() : {}));
   APP.ecouteurs.push(unsub);
+}
+
+function genOptionsJournees(active, total) {
+  let opts = '';
+  for (let i = 1; i <= total; i++) {
+    opts += '<option value="' + i + '"' + (i === active ? ' selected' : '') + '>'
+          + 'Journée ' + i + '</option>';
+  }
+  return opts;
 }
 
 function allerJournee(j) {
