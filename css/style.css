@@ -491,14 +491,44 @@ body {
   min-height: 200px; color: var(--gris); font-size: 14px;
   flex-direction: column; gap: 12px;
 }
+/* ── Ballon qui rebondit (remplace le spinner) ─────────────── */
 .spinner {
-  width: 32px; height: 32px;
-  border: 3px solid var(--gris-l);
-  border-top-color: var(--orange);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  width: 40px; height: 40px;
+  position: relative;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+.spinner::before {
+  content: '⚽';
+  font-size: 32px;
+  position: absolute;
+  animation: ballBounce 0.8s cubic-bezier(0.36, 0.07, 0.19, 0.97) infinite alternate;
+}
+.spinner::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 20px; height: 4px;
+  background: rgba(0,0,0,0.12);
+  border-radius: 50%;
+  animation: shadowBounce 0.8s cubic-bezier(0.36, 0.07, 0.19, 0.97) infinite alternate;
+}
+
+@keyframes ballBounce {
+  0%   { transform: translateY(0px) rotate(0deg); }
+  100% { transform: translateY(-20px) rotate(180deg); }
+}
+@keyframes shadowBounce {
+  0%   { transform: translateX(-50%) scaleX(1); opacity: 0.15; }
+  100% { transform: translateX(-50%) scaleX(0.5); opacity: 0.05; }
+}
+
+/* Le texte de chargement en dessous */
+.loading {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 200px; color: var(--gris); font-size: 14px;
+  flex-direction: column; gap: 16px;
+}
 
 /* ── Utilitaires ──────────────────────────────────────────── */
 .mt-8  { margin-top: 8px; }
@@ -722,3 +752,16 @@ body {
 #journee-dropdown::-webkit-scrollbar { width: 4px; }
 #journee-dropdown::-webkit-scrollbar-track { background: transparent; }
 #journee-dropdown::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 2px; }
+
+/* ── Bouton rafraîchir scores ────────────────────────────── */
+#btn-refresh-scores:hover:not(:disabled) {
+  opacity: 0.88;
+}
+#btn-refresh-scores:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+#btn-refresh-scores .ball-wrap {
+  width: 18px; height: 24px;
+  display: inline-flex; align-items: center;
+}
