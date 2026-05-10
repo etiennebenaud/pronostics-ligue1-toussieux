@@ -375,7 +375,20 @@ function changerJournee(d) {
 
 function renderGrille(j, data) {
   const matchs = data.matchs || genererMatchsVides();
-  const soumissions = data.soumissions || {};
+
+  // Reconstruire soumissions : supporte les deux formats
+  // Format correct (imbriqué) : { soumissions: { etienne: {...} } }
+  // Format legacy (plat) : { 'soumissions.etienne': {...} }
+  let soumissions = data.soumissions || {};
+  if (Object.keys(soumissions).length === 0) {
+    // Chercher les champs plats "soumissions.xxx"
+    Object.keys(data).forEach(key => {
+      if (key.startsWith('soumissions.')) {
+        const joueurId = key.replace('soumissions.', '');
+        soumissions[joueurId] = data[key];
+      }
+    });
+  }
   const deadline = data.deadline || null;
   const now = Date.now();
   let saisieOuverte = true, deadlineLabel = 'Saisie ouverte';
@@ -479,10 +492,15 @@ async function soumettre(j) {
   if (complets < CONFIG.nbMatchsParJournee && !confirm(`${CONFIG.nbMatchsParJournee-complets} match(s) sans pronostic. Soumettre quand même ?`)) return;
   if (!confirm(`Confirmer pour la Journée ${j} ?\n⚠️ Non modifiable ensuite.`)) return;
   try {
-    await dbSaison('journees', `j${j}`).set({
-      [`soumissions.${APP.joueurActif.id}`]: pronostics,
-      [`statuts.${APP.joueurActif.id}`]: { soumisAt: Date.now(), complets },
-    }, { merge: true });
+    // Lire d'abord le doc pour merger manuellement les soumissions
+    const ref  = dbSaison('journees', `j${j}`);
+    const snap = await ref.get();
+    const existing = snap.exists ? snap.data() : {};
+    const soumissions = existing.soumissions || {};
+    const statuts     = existing.statuts     || {};
+    soumissions[APP.joueurActif.id] = pronostics;
+    statuts[APP.joueurActif.id]     = { soumisAt: Date.now(), complets };
+    await ref.set({ ...existing, soumissions, statuts }, { merge: true });
     showToast(`✅ ${APP.joueurActif.nom} — pronostics soumis !`, 'success');
   } catch(e) { console.error(e); showToast('Erreur soumission. Réessayez.', 'error'); }
 }
@@ -515,8 +533,17 @@ function changerJourneeR(d) {
 }
 
 function renderResultats(j, data) {
-  const matchs      = data.matchs      || genererMatchsVides();
-  const soumissions = data.soumissions || {};
+  const matchs = data.matchs || genererMatchsVides();
+
+  // Reconstruire soumissions (support format plat legacy)
+  let soumissions = data.soumissions || {};
+  if (Object.keys(soumissions).length === 0) {
+    Object.keys(data).forEach(key => {
+      if (key.startsWith('soumissions.')) {
+        soumissions[key.replace('soumissions.', '')] = data[key];
+      }
+    });
+  }
   const deadline    = data.deadline    || null;
 
   // Une journée est "fermée" si sa deadline est passée OU si tous ses scores sont entrés
@@ -692,7 +719,15 @@ function chargerClassement() {
     const totaux=Object.fromEntries(APP.joueurs.map(jo=>[jo.id,{pts:0,gains:0}]));
     snaps.forEach(snap=>{
       if(!snap.exists) return;
-      const {matchs=[],soumissions={}}=snap.data();
+      const snapData = snap.data();
+      const matchs = snapData.matchs || [];
+      // Support format plat legacy
+      let soumissions = snapData.soumissions || {};
+      if (Object.keys(soumissions).length === 0) {
+        Object.keys(snapData).forEach(k => {
+          if (k.startsWith('soumissions.')) soumissions[k.replace('soumissions.','')] = snapData[k];
+        });
+      }
       const ptsJ=Object.fromEntries(APP.joueurs.map(jo=>[jo.id,
         matchs.reduce((acc,match,idx)=>{
           const p=soumissions[jo.id]?.[idx];
