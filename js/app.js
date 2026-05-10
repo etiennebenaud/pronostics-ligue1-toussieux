@@ -328,15 +328,21 @@ function chargerGrille() {
     <div style="padding:16px">
       <div class="journee-nav">
         <button onclick="changerJournee(-1)" ${APP.journeeActive<=1?'disabled':''}>‹</button>
-        <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
-          <select id="select-journee"
-            onchange="allerJournee(parseInt(this.value))"
-            style="background:transparent;border:none;color:white;font-size:14px;
-                   font-weight:700;text-align:center;cursor:pointer;outline:none;
-                   appearance:none;-webkit-appearance:none;padding:0 4px;
-                   max-width:160px">
-            ${genOptionsJournees(APP.journeeActive, CONFIG.nbJournees)}
-          </select>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px;position:relative">
+          <div onclick="toggleSelectJournee()" id="journee-display"
+            style="font-size:14px;font-weight:700;color:white;cursor:pointer;
+                   display:flex;align-items:center;gap:6px;padding:4px 8px;
+                   border-radius:8px;background:rgba(255,255,255,0.1)">
+            <span id="journee-display-text">Journée ${APP.journeeActive}</span>
+            <span style="font-size:10px;opacity:0.7">▾</span>
+          </div>
+          <div id="journee-dropdown" style="display:none;position:absolute;top:32px;
+               background:#1F4E79;border-radius:10px;
+               box-shadow:0 4px 20px rgba(0,0,0,0.4);z-index:200;
+               max-height:240px;overflow-y:auto;min-width:140px;
+               border:1px solid rgba(255,255,255,0.15)">
+            ${genOptionsJourneesHTML(APP.journeeActive, CONFIG.nbJournees)}
+          </div>
           <div class="journee-deadline" id="deadline-label">Chargement...</div>
         </div>
         <button onclick="changerJournee(1)" ${APP.journeeActive>=CONFIG.nbJournees?'disabled':''}>›</button>
@@ -359,7 +365,51 @@ function genOptionsJournees(active, total) {
   return opts;
 }
 
+function genOptionsJourneesHTML(active, total) {
+  let html = '';
+  for (let i = 1; i <= total; i++) {
+    const bg = (i === active) ? 'rgba(255,255,255,0.18)' : 'transparent';
+    const fw = (i === active) ? '700' : '400';
+    html += '<div onclick="allerJournee(' + i + ')" class="dd-journee-item"'
+          + ' style="padding:8px 16px;cursor:pointer;font-size:13px;'
+          + 'font-weight:' + fw + ';color:white;background:' + bg + ';white-space:nowrap">'
+          + 'Journée ' + i + '</div>';
+  }
+  return html;
+}
+
+
+function toggleSelectJournee() {
+  const dd = document.getElementById('journee-dropdown');
+  if (!dd) return;
+  const isOpen = dd.style.display !== 'none';
+  dd.style.display = isOpen ? 'none' : 'block';
+  // Scroller sur la journée active
+  if (!isOpen) {
+    const items = dd.querySelectorAll('div');
+    if (items[APP.journeeActive - 1]) {
+      items[APP.journeeActive - 1].scrollIntoView({ block: 'center' });
+    }
+  }
+  // Fermer si clic ailleurs
+  if (!isOpen) {
+    setTimeout(() => {
+      document.addEventListener('click', function closeDD(e) {
+        const dd2 = document.getElementById('journee-dropdown');
+        const btn = document.getElementById('journee-display');
+        if (dd2 && btn && !dd2.contains(e.target) && !btn.contains(e.target)) {
+          dd2.style.display = 'none';
+          document.removeEventListener('click', closeDD);
+        }
+      });
+    }, 10);
+  }
+}
+
 function allerJournee(j) {
+  // Fermer le dropdown
+  const dd = document.getElementById('journee-dropdown');
+  if (dd) dd.style.display = 'none';
   if (j >= 1 && j <= CONFIG.nbJournees && j !== APP.journeeActive) {
     APP.journeeActive = j;
     const badge = document.getElementById('header-journee-badge');
@@ -665,35 +715,55 @@ function renderResultats(j, data) {
 
   html += '</tbody></table></div>';
 
-  // Podium (seulement si points affichés)
-  if (afficherPtsGains) {
-    const classJ = APP.joueurs
-      .filter(jo => totaux[jo.id] > 0)
-      .sort((a, b) => totaux[b.id] - totaux[a.id]);
+  // Classement journée
+  const joueursTries = APP.joueurs
+    .filter(jo => soumissions[jo.id])
+    .sort((a, b) => (totaux[b.id] || 0) - (totaux[a.id] || 0));
 
-    if (classJ.length > 0) {
-      html += `<div class="card mt-12">
-        <div class="card-title">🏆 Podium Journée ${j}</div>
-        ${classJ.slice(0, 3).map((jo, i) => {
-          const gain = [CONFIG.gains.premier, CONFIG.gains.deuxieme, CONFIG.gains.troisieme][i] || 0;
-          return `<div class="classement-row">
-            <div class="rang-badge rang-${i+1}">${['🥇','🥈','🥉'][i]}</div>
-            <div class="classement-nom">${jo.emoji} ${jo.nom}</div>
-            <div class="classement-pts">${totaux[jo.id]}<span>pts</span></div>
-            <div class="classement-gains">+${gain}€</div>
-          </div>`;
-        }).join('')}
-      </div>`;
-    }
+  if (joueursTries.length > 0) {
+    const monId2 = APP.joueurActif?.id;
+    html += '<div class="card mt-12"><div class="card-title">📊 Classement Journée ' + j + '</div>';
+
+    const medals = { 1:'🥇', 2:'🥈', 3:'🥉' };
+    let ptsPrecedents = -1, rangCourant = 1;
+
+    joueursTries.forEach((jo, i) => {
+      const pts  = totaux[jo.id] || 0;
+      const rang = (pts !== ptsPrecedents) ? i + 1 : rangCourant;
+      rangCourant = rang; ptsPrecedents = pts;
+      const gain  = afficherPtsGains
+        ? ([CONFIG.gains.premier, CONFIG.gains.deuxieme, CONFIG.gains.troisieme][rang - 1] || 0)
+        : 0;
+      const isMe  = jo.id === monId2;
+      const rangClass = rang <= 3 ? 'rang-' + rang : 'rang-other';
+      const gainHtml  = (afficherPtsGains && gain > 0)
+        ? '<div class="classement-gains">+' + gain + '€</div>'
+        : '<div></div>';
+
+      html += '<div class="classement-row' + (isMe ? ' moi' : '') + '">'
+            + '<div class="rang-badge ' + rangClass + '">' + (medals[rang] || rang) + '</div>'
+            + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + '</div>'
+            + '<div class="classement-pts">' + pts + '<span>pts</span></div>'
+            + gainHtml
+            + '</div>';
+    });
+
+    // Joueurs n'ayant pas soumis
+    APP.joueurs.filter(jo => !soumissions[jo.id]).forEach(jo => {
+      html += '<div class="classement-row" style="opacity:0.35">'
+            + '<div class="rang-badge rang-other">—</div>'
+            + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + '</div>'
+            + '<div class="classement-pts">—<span>ns</span></div>'
+            + '<div></div></div>';
+    });
+
+    html += '</div>';
+
   } else if (journeeFermee) {
-    // Journée fermée mais pas de points (saison archivée ou pas de scores)
-    html += `<div class="card mt-12" style="background:var(--gris-l);border:none">
-      <p class="text-sm text-muted text-center" style="padding:4px 0">
-        📁 Journée archivée — scores en lecture seule
-      </p>
-    </div>`;
+    html += '<div class="card mt-12" style="background:var(--gris-l);border:none">'
+          + '<p class="text-sm text-muted text-center" style="padding:4px 0">'
+          + '📁 Journée archivée — scores en lecture seule</p></div>';
   }
-
   const rc = document.getElementById('resultats-content');
   if (rc) rc.innerHTML = html;
 }
@@ -712,48 +782,163 @@ async function saisirScore(j,idx,cote,val) {
 
 // ── Classement ────────────────────────────────────────────────
 function chargerClassement() {
-  document.getElementById('tab-classement').innerHTML=`<div style="padding:16px"><div class="loading"><div class="spinner"></div>Calcul...</div></div>`;
-  Promise.all(Array.from({length:CONFIG.nbJournees},(_,i)=>
+  const container = document.getElementById('tab-classement');
+
+  // Sélecteur : Saison complète OU journée spécifique
+  const optionsJ = '<option value="saison">🏆 Saison complète</option>'
+    + Array.from({length: CONFIG.nbJournees}, (_, i) =>
+        '<option value="' + (i+1) + '">Journée ' + (i+1) + '</option>'
+      ).join('');
+
+  container.innerHTML = '<div style="padding:16px">'
+    + '<select id="select-classement-type" onchange="changerTypeClassement()"'
+    + ' style="width:100%;padding:10px 12px;border:2px solid var(--color-border-primary);'
+    + 'border-radius:10px;font-size:14px;font-weight:500;margin-bottom:16px;'
+    + 'background:var(--color-background-primary);color:var(--color-text-primary);outline:none">'
+    + optionsJ + '</select>'
+    + '<div id="classement-content"><div class="loading"><div class="spinner"></div>Calcul...</div></div>'
+    + '</div>';
+
+  chargerClassementSaison();
+}
+
+function changerTypeClassement() {
+  const val = document.getElementById('select-classement-type')?.value;
+  if (val === 'saison') chargerClassementSaison();
+  else chargerClassementJournee(parseInt(val));
+}
+
+function chargerClassementSaison() {
+  const container = document.getElementById('classement-content');
+  if (container) container.innerHTML = '<div class="loading"><div class="spinner"></div>Calcul...</div>';
+
+  Promise.all(Array.from({length: CONFIG.nbJournees}, (_, i) =>
     dbSaison('journees', `j${i+1}`).get()
-  )).then(snaps=>{
-    const totaux=Object.fromEntries(APP.joueurs.map(jo=>[jo.id,{pts:0,gains:0}]));
-    snaps.forEach(snap=>{
-      if(!snap.exists) return;
+  )).then(snaps => {
+    const totaux = Object.fromEntries(APP.joueurs.map(jo => [jo.id, { pts: 0, gains: 0 }]));
+
+    snaps.forEach(snap => {
+      if (!snap.exists) return;
       const snapData = snap.data();
-      const matchs = snapData.matchs || [];
-      // Support format plat legacy
+      const matchs   = snapData.matchs || [];
       let soumissions = snapData.soumissions || {};
       if (Object.keys(soumissions).length === 0) {
         Object.keys(snapData).forEach(k => {
           if (k.startsWith('soumissions.')) soumissions[k.replace('soumissions.','')] = snapData[k];
         });
       }
-      const ptsJ=Object.fromEntries(APP.joueurs.map(jo=>[jo.id,
-        matchs.reduce((acc,match,idx)=>{
-          const p=soumissions[jo.id]?.[idx];
-          return acc+(p&&match.scoreReel?calculerPoints(p,match.scoreReel)||0:0);
-        },0)]));
-      const sorted=APP.joueurs.slice().sort((a,b)=>ptsJ[b.id]-ptsJ[a.id]);
-      APP.joueurs.forEach(jo=>totaux[jo.id].pts+=ptsJ[jo.id]);
-      if(sorted[0]&&ptsJ[sorted[0].id]>0) totaux[sorted[0].id].gains+=CONFIG.gains.premier;
-      if(sorted[1]&&ptsJ[sorted[1].id]>0) totaux[sorted[1].id].gains+=CONFIG.gains.deuxieme;
-      if(sorted[2]&&ptsJ[sorted[2].id]>0) totaux[sorted[2].id].gains+=CONFIG.gains.troisieme;
+
+      const ptsJ = Object.fromEntries(APP.joueurs.map(jo => [jo.id,
+        matchs.reduce((acc, match, idx) => {
+          const p = soumissions[jo.id]?.[idx];
+          return acc + (p && match.scoreReel ? calculerPoints(p, match.scoreReel) || 0 : 0);
+        }, 0)]));
+
+      const sorted = APP.joueurs.slice().sort((a, b) => ptsJ[b.id] - ptsJ[a.id]);
+      APP.joueurs.forEach(jo => { totaux[jo.id].pts += ptsJ[jo.id]; });
+      if (sorted[0] && ptsJ[sorted[0].id] > 0) totaux[sorted[0].id].gains += CONFIG.gains.premier;
+      if (sorted[1] && ptsJ[sorted[1].id] > 0) totaux[sorted[1].id].gains += CONFIG.gains.deuxieme;
+      if (sorted[2] && ptsJ[sorted[2].id] > 0) totaux[sorted[2].id].gains += CONFIG.gains.troisieme;
     });
-    const sorted=APP.joueurs.slice().sort((a,b)=>totaux[b.id].pts-totaux[a.id].pts);
-    const monId=APP.joueurActif?.id;
-    let html=`<div style="padding:16px"><div class="card"><div class="card-title">🏆 Classement — ${CONFIG.saison}</div>`;
-    sorted.forEach((jo,i)=>{
-      const r=i+1;
-      html+=`<div class="classement-row ${jo.id===monId?'moi':''}">
-        <div class="rang-badge ${r<=3?`rang-${r}`:'rang-other'}">${r<=3?['🥇','🥈','🥉'][i]:r}</div>
-        <div class="classement-nom">${jo.emoji} ${jo.nom}</div>
-        <div class="classement-pts">${totaux[jo.id].pts}<span>pts</span></div>
-        <div class="classement-gains">${totaux[jo.id].gains}€</div></div>`;
+
+    const sorted = APP.joueurs.slice().sort((a, b) => totaux[b.id].pts - totaux[a.id].pts);
+    const monId  = APP.joueurActif?.id;
+    let html = '<div class="card"><div class="card-title">🏆 Classement général — ' + CONFIG.saison + '</div>';
+    sorted.forEach((jo, i) => {
+      const r = i + 1;
+      html += '<div class="classement-row' + (jo.id === monId ? ' moi' : '') + '">'
+        + '<div class="rang-badge ' + (r <= 3 ? 'rang-' + r : 'rang-other') + '">'
+        + (r <= 3 ? ['🥇','🥈','🥉'][i] : r) + '</div>'
+        + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + '</div>'
+        + '<div class="classement-pts">' + totaux[jo.id].pts + '<span>pts</span></div>'
+        + '<div class="classement-gains">' + totaux[jo.id].gains + '€</div>'
+        + '</div>';
     });
-    html+='</div></div>';
-    document.getElementById('tab-classement').innerHTML=html;
-  }).catch(e=>{ console.error(e); document.getElementById('tab-classement').innerHTML='<div class="empty-state"><div class="icon">⚠️</div><p>Erreur</p></div>'; });
+    html += '</div>';
+    if (container) container.innerHTML = html;
+  }).catch(e => {
+    console.error(e);
+    if (container) container.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><p>Erreur</p></div>';
+  });
 }
+
+function chargerClassementJournee(j) {
+  const container = document.getElementById('classement-content');
+  if (container) container.innerHTML = '<div class="loading"><div class="spinner"></div>Chargement J' + j + '...</div>';
+
+  dbSaison('journees', `j${j}`).get().then(snap => {
+    if (!snap.exists) {
+      container.innerHTML = '<div class="empty-state"><div class="icon">📭</div><p>Journée ' + j + ' non disponible.</p></div>';
+      return;
+    }
+    const snapData = snap.data();
+    const matchs   = snapData.matchs || [];
+    let soumissions = snapData.soumissions || {};
+    if (Object.keys(soumissions).length === 0) {
+      Object.keys(snapData).forEach(k => {
+        if (k.startsWith('soumissions.')) soumissions[k.replace('soumissions.','')] = snapData[k];
+      });
+    }
+
+    // Calculer les points de chaque joueur pour cette journée
+    const ptsJ  = Object.fromEntries(APP.joueurs.map(jo => [jo.id,
+      matchs.reduce((acc, match, idx) => {
+        const p = soumissions[jo.id]?.[idx];
+        return acc + (p && match.scoreReel ? calculerPoints(p, match.scoreReel) || 0 : 0);
+      }, 0)]));
+
+    // Trier
+    const sorted = APP.joueurs.slice()
+      .filter(jo => soumissions[jo.id]) // seulement ceux qui ont soumis
+      .sort((a, b) => ptsJ[b.id] - ptsJ[a.id]);
+
+    const monId   = APP.joueurActif?.id;
+    const aTousScores = matchs.length > 0 && matchs.every(m => m.scoreReel !== null);
+
+    let html = '<div class="card"><div class="card-title">📊 Classement Journée ' + j + '</div>';
+
+    if (!aTousScores) {
+      html += '<p class="text-sm text-muted" style="margin-bottom:10px">⏳ Scores pas encore tous entrés — points provisoires</p>';
+    }
+
+    const medals = { 1:'🥇', 2:'🥈', 3:'🥉' };
+    let ptsPrecedents = -1, rangCourant = 1;
+
+    sorted.forEach((jo, i) => {
+      const pts  = ptsJ[jo.id] || 0;
+      const rang = (pts !== ptsPrecedents) ? i + 1 : rangCourant;
+      rangCourant = rang; ptsPrecedents = pts;
+      const gain = [CONFIG.gains.premier, CONFIG.gains.deuxieme, CONFIG.gains.troisieme][rang-1] || 0;
+      const isMe = jo.id === monId;
+
+      html += '<div class="classement-row' + (isMe ? ' moi' : '') + '">'
+        + '<div class="rang-badge ' + (rang <= 3 ? 'rang-' + rang : 'rang-other') + '">'
+        + (medals[rang] || rang) + '</div>'
+        + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + '</div>'
+        + '<div class="classement-pts">' + pts + '<span>pts</span></div>'
+        + (aTousScores && gain > 0
+            ? '<div class="classement-gains">+' + gain + '€</div>'
+            : '<div></div>')
+        + '</div>';
+    });
+
+    // Joueurs n'ayant pas soumis
+    APP.joueurs.filter(jo => !soumissions[jo.id]).forEach(jo => {
+      html += '<div class="classement-row" style="opacity:0.35">'
+        + '<div class="rang-badge rang-other">—</div>'
+        + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + '</div>'
+        + '<div class="classement-pts">—<span>ns</span></div>'
+        + '<div></div></div>';
+    });
+
+    html += '</div>';
+    if (container) container.innerHTML = html;
+  }).catch(e => {
+    console.error(e);
+    if (container) container.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><p>Erreur</p></div>';
+  });
+}
+
 
 // ── Bonus ─────────────────────────────────────────────────────
 function chargerBonus() {
