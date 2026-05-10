@@ -348,8 +348,16 @@ async function sauverInfosChampionnat(saisonKey_) {
 
 
 // ── Basculer vers une saison ──────────────────────────────
-function basculerSaison(key) {
+async function basculerSaison(key) {
   APP.saisonAffichee = key;
+
+  // Charger le statut de clôture depuis Firestore
+  try {
+    const snap = await APP.db.collection('saisons').doc(key).get();
+    APP.saisonEstCloturee = snap.exists ? (snap.data().cloturee === true) : false;
+  } catch(e) {
+    APP.saisonEstCloturee = false;
+  }
 
   // Mettre à jour le span #header-saison
   const hSaison = document.getElementById('header-saison');
