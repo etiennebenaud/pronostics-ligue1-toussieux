@@ -278,6 +278,36 @@ function chargerAdmin() {
         <p class="text-sm text-muted">Ajouter, modifier ou retirer des participants.</p>
       </div>
 
+      <!-- ── Règles soumissions tardives ── -->
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title" style="margin-bottom:8px">⚙️ Règles soumissions tardives</div>
+        <label class="profil-label">Points pour non-soumis</label>
+        <select class="profil-input" id="admin-sans-prono" style="margin-bottom:10px"
+          onchange="sauverRegleSansProno(this.value)">
+          <option value="demi_minimum" ${CONFIG.regles.sansPronostic==='demi_minimum'?'selected':''}>
+            Moitié du minimum (recommandé)
+          </option>
+          <option value="demi_moyenne" ${CONFIG.regles.sansPronostic==='demi_moyenne'?'selected':''}>
+            Moitié de la moyenne
+          </option>
+          <option value="zero" ${CONFIG.regles.sansPronostic==='zero'?'selected':''}>
+            0 point
+          </option>
+        </select>
+        <label class="profil-label">Pénalité retard (pts)</label>
+        <input type="number" class="profil-input" id="admin-penalite"
+          value="${CONFIG.regles.penaliteRetard}" max="0" min="-20"
+          style="margin-bottom:10px"
+          onchange="sauverPenalite(parseInt(this.value))">
+        <label class="profil-label">Délai réouverture (heures)</label>
+        <input type="number" class="profil-input" id="admin-delai-reouverture"
+          value="${CONFIG.regles.delaiReouvretureHeures}" min="1" max="72"
+          onchange="sauverDelaiReouverture(parseInt(this.value))">
+        <p class="text-sm text-muted mt-8">
+          Ces réglages s'appliquent à toutes les journées. Modifiez aussi config.js pour les rendre permanents.
+        </p>
+      </div>
+
       <!-- ── Saison ── -->
       <div class="card">
         <div class="card-title" style="margin-bottom:8px">🏁 Saison</div>
@@ -423,6 +453,43 @@ function changerJournee(d) {
   if (n >= 1 && n <= CONFIG.nbJournees) { APP.journeeActive = n; chargerTab('grille'); }
 }
 
+
+// ── Points par défaut pour les non-soumis ────────────────────
+// Appelé après clôture d'une journée, pour les joueurs sans soumission
+function calculerPointsDefaut(totauxSoumettants) {
+  const regle = CONFIG.regles.sansPronostic || 'demi_minimum';
+  const pts   = Object.values(totauxSoumettants).filter(p => p > 0);
+  if (pts.length === 0) return 0;
+  switch (regle) {
+    case 'zero':
+      return 0;
+    case 'demi_moyenne':
+      return Math.round((pts.reduce((a,b) => a+b, 0) / pts.length) / 2);
+    case 'demi_minimum':
+    default:
+      return Math.round(Math.min(...pts) / 2);
+  }
+}
+
+// ── Vérifier si un match est déjà joué (basé sur timestamp) ──
+function matchDejaJoue(match) {
+  if (!match.timestamp) return false;
+  return Date.now() > match.timestamp;
+}
+
+// ── Vérifier si une réouverture est encore possible ──────────
+function peutReouvrir(deadline) {
+  if (!deadline) return false;
+  const delaiMs = (CONFIG.regles.delaiReouvretureHeures || 24) * 3600000;
+  return Date.now() < deadline + delaiMs;
+}
+
+// ── Vérifier si une soumission est tardive ───────────────────
+function estSoumissionTardive(deadline) {
+  if (!deadline) return false;
+  return Date.now() > deadline;
+}
+
 function renderGrille(j, data) {
   const matchs = data.matchs || genererMatchsVides();
 
@@ -453,8 +520,12 @@ function renderGrille(j, data) {
 
   const sb = document.getElementById('statut-bar');
   if (sb) sb.innerHTML = APP.joueurs.map(jo => {
-    const s = !!soumissions[jo.id];
-    return `<div class="statut-joueur ${s?'soumis':''}"><div class="statut-dot"></div>${jo.emoji} ${jo.nom.split(' ')[0]}${s?' ✓':''}</div>`;
+    const soumis  = !!soumissions[jo.id];
+    const tardif2 = data.statuts?.[jo.id]?.tardif === true;
+    const cls     = soumis ? (tardif2 ? 'en-cours' : 'soumis') : '';
+    const label   = soumis ? (tardif2 ? ' ⚠️' : ' ✓') : '';
+    return '<div class="statut-joueur ' + cls + '"><div class="statut-dot"></div>'
+      + jo.emoji + ' ' + jo.nom.split(' ')[0] + label + '</div>';
   }).join('');
 
   const monId = APP.joueurActif?.id;
@@ -464,26 +535,35 @@ function renderGrille(j, data) {
   // Une saison non courante mais non clôturée reste modifiable
   const saisonRO = APP.saisonEstCloturee === true;
 
+  // ── Réouverture tardive pour non-soumis ─────────────────
+  const tardif       = deadline ? estSoumissionTardive(deadline) : false;
+  const peutRouvrir  = deadline ? peutReouvrir(deadline) : true;
+  const modeRetard   = tardif && peutRouvrir && !jaiSoumis && !!monId;
+
   const mc = document.getElementById('grille-matchs');
   if (!mc) return;
   mc.innerHTML = matchs.map((match, idx) => {
     const sr = match.scoreReel || null;
     const pts = (prono, reel) => reel ? calculerPoints(prono, reel) : null;
-    const locked = jaiSoumis || !saisieOuverte || saisonRO;
+    // En mode retard : saisie autorisée uniquement sur matchs futurs
+  const locked = jaiSoumis || (!saisieOuverte && !modeRetard) || saisonRO;
     const monProno = soumissions[monId]?.[idx] || { dom:'', ext:'' };
     const mesPoints = monId && sr ? calculerPoints(monProno, sr) : null;
 
-    const inputs = monId ? `
-      <div class="score-inputs">
-        <input type="number" min="0" max="20" class="score-input ${locked?'locked':''}"
-          id="sc-${idx}-dom" value="${monProno.dom!==''?monProno.dom:''}"
-          ${locked?'readonly':''} onchange="sauverPronoTemp(${idx})" placeholder="—">
-        <span class="score-separator">-</span>
-        <input type="number" min="0" max="20" class="score-input ${locked?'locked':''}"
-          id="sc-${idx}-ext" value="${monProno.ext!==''?monProno.ext:''}"
-          ${locked?'readonly':''} onchange="sauverPronoTemp(${idx})" placeholder="—">
-        ${mesPoints!==null?`<div class="points-badge points-${mesPoints}">${mesPoints}</div>`:''}
-      </div>` : '';
+    // En mode retard : match passé = forcément verrouillé (0 pt)
+    const matchPasse   = modeRetard && matchDejaJoue(match);
+    const lockedMatch  = locked || matchPasse;
+    const inputs = monId ? '<div class="score-inputs">'
+      + '<input type="number" min="0" max="20" class="score-input ' + (lockedMatch?'locked':'') + '"'
+      + ' id="sc-' + idx + '-dom" value="' + (monProno.dom!==''?monProno.dom:'') + '"'
+      + (lockedMatch?' readonly':'') + ' onchange="sauverPronoTemp(' + idx + ')" placeholder="—">'
+      + '<span class="score-separator">-</span>'
+      + '<input type="number" min="0" max="20" class="score-input ' + (lockedMatch?'locked':'') + '"'
+      + ' id="sc-' + idx + '-ext" value="' + (monProno.ext!==''?monProno.ext:'') + '"'
+      + (lockedMatch?' readonly':'') + ' onchange="sauverPronoTemp(' + idx + ')" placeholder="—">'
+      + (matchPasse ? '<span style="font-size:10px;color:var(--gris);margin-left:4px">0pt</span>' : '')
+      + (mesPoints!==null ? '<div class="points-badge points-' + mesPoints + '">' + mesPoints + '</div>' : '')
+      + '</div>' : '';
 
     const autres = peutVoir && APP.joueurs.length > 1 ? `
       <div class="mt-8" style="display:flex;flex-wrap:wrap;gap:4px">
@@ -509,16 +589,36 @@ function renderGrille(j, data) {
   const bc = document.getElementById('btn-soumettre-container');
   if (!bc) return;
   if (APP.estAdmin) {
-    bc.innerHTML = `<button class="btn-primary mt-8" onclick="ouvrirAdminJournee()">⚙️ Admin — Gérer cette journée</button>`;
+    bc.innerHTML = '<button class="btn-primary mt-8" onclick="ouvrirAdminJournee()">⚙️ Admin — Gérer cette journée</button>';
   } else if (!monId) {
     bc.innerHTML = '';
   } else if (jaiSoumis) {
-    bc.innerHTML = `<button class="btn-soumettre locked" disabled>✅ Pronostics soumis et verrouillés</button>`;
+    // Vérifier si c'était une soumission tardive
+    const statut = data.statuts?.[monId];
+    const etaitTardif = statut?.tardif === true;
+    bc.innerHTML = etaitTardif
+      ? '<button class="btn-soumettre locked" disabled style="background:var(--or)">'
+        + '⚠️ Pronostics soumis en retard (pénalité ' + CONFIG.regles.penaliteRetard + 'pts)</button>'
+      : '<button class="btn-soumettre locked" disabled>✅ Pronostics soumis et verrouillés</button>';
+  } else if (modeRetard) {
+    // Réouverture possible : saisie tardive avec avertissement
+    bc.innerHTML = '<div style="background:var(--or-l);border:1px solid var(--or);border-radius:10px;'
+      + 'padding:12px;margin-top:8px">'
+      + '<p style="font-size:13px;font-weight:600;color:var(--or);margin-bottom:6px">⚠️ Saisie tardive</p>'
+      + '<p class="text-sm" style="margin-bottom:8px;color:var(--gris)">'
+      + 'Les matchs déjà joués rapportent <strong>0 point</strong>.<br>'
+      + 'Pénalité : <strong>' + CONFIG.regles.penaliteRetard + ' pts</strong> sur votre total.'
+      + '</p>'
+      + '<button class="btn-soumettre" onclick="soumettreTardif(' + j + ')"'
+      + ' style="background:var(--or)">⚠️ Soumettre en retard (pénalité ' + CONFIG.regles.penaliteRetard + 'pts)</button>'
+      + '</div>';
+  } else if (!saisieOuverte && !peutRouvrir) {
+    bc.innerHTML = '<button class="btn-soumettre" disabled>⛔ Délai dépassé — saisie impossible</button>';
   } else if (!saisieOuverte) {
-    bc.innerHTML = `<button class="btn-soumettre" disabled>⛔ Saisie fermée</button>`;
+    bc.innerHTML = '<button class="btn-soumettre" disabled>⛔ Saisie fermée</button>';
   } else {
-    bc.innerHTML = `<button class="btn-soumettre" onclick="soumettre(${j})">✅ Soumettre mes pronostics</button>
-      <p class="text-sm text-center mt-8">Une fois soumis, vous verrez les pronostics des autres joueurs ayant déjà joué.</p>`;
+    bc.innerHTML = '<button class="btn-soumettre" onclick="soumettre(' + j + ')">✅ Soumettre mes pronostics</button>'
+      + '<p class="text-sm text-center mt-8">Une fois soumis, vous verrez les pronostics des autres joueurs ayant déjà joué.</p>';
   }
 }
 
@@ -555,31 +655,168 @@ async function soumettre(j) {
   } catch(e) { console.error(e); showToast('Erreur soumission. Réessayez.', 'error'); }
 }
 
+// ── Soumission tardive ────────────────────────────────────────
+async function soumettreTardif(j) {
+  if (!APP.joueurActif) return;
+
+  const ref      = dbSaison('journees', `j${j}`);
+  const snap     = await ref.get();
+  const data     = snap.exists ? snap.data() : {};
+  const matchs   = data.matchs || [];
+  const deadline = data.deadline || null;
+  const now      = Date.now();
+
+  const pronostics = {};
+  let complets = 0;
+
+  for (let i = 0; i < CONFIG.nbMatchsParJournee; i++) {
+    const match = matchs[i] || {};
+    const dejaJoue = match.timestamp && now > match.timestamp;
+
+    if (dejaJoue) {
+      // Match passé : pronostic vide (0 pt automatiquement)
+      pronostics[i] = { dom: '', ext: '', passé: true };
+    } else {
+      const d = document.getElementById(`sc-${i}-dom`)?.value;
+      const e = document.getElementById(`sc-${i}-ext`)?.value;
+      pronostics[i] = { dom: d!==''?parseInt(d):'', ext: e!==''?parseInt(e):'' };
+      if (d!=='' && e!=='') complets++;
+    }
+  }
+
+  const nbFuturs = matchs.filter(m => m.timestamp && now <= m.timestamp).length;
+  if (nbFuturs > 0 && complets < nbFuturs) {
+    if (!confirm(`${nbFuturs - complets} match(s) futur(s) sans pronostic. Soumettre quand même ?`)) return;
+  }
+
+  if (!confirm(`Confirmer la soumission tardive pour J${j} ?
+`
+    + `• Matchs passés : 0 pt automatiquement
+`
+    + `• Pénalité : ${CONFIG.regles.penaliteRetard} pts sur votre total de journée`)) return;
+
+  try {
+    const existing = snap.exists ? snap.data() : {};
+    const soumissions = existing.soumissions || {};
+    const statuts     = existing.statuts     || {};
+
+    soumissions[APP.joueurActif.id] = pronostics;
+    statuts[APP.joueurActif.id]     = {
+      soumisAt:  now,
+      complets,
+      tardif:    true,
+      penalite:  CONFIG.regles.penaliteRetard,
+    };
+
+    await ref.set({ ...existing, soumissions, statuts }, { merge: true });
+    showToast(`⚠️ Soumission tardive enregistrée (${CONFIG.regles.penaliteRetard} pts)`, 'warning');
+  } catch(e) {
+    console.error(e);
+    showToast('Erreur soumission tardive', 'error');
+  }
+}
+
+
 function calculerPoints(prono, reel) {
+  // Match passé en soumission tardive → 0 pt
+  if (prono && prono.passé === true) return 0;
   const pd=parseInt(prono.dom), pe=parseInt(prono.ext), rd=parseInt(reel.dom), re=parseInt(reel.ext);
   if ([pd,pe,rd,re].some(isNaN)) return null;
   if (pd===rd && pe===re) return (rd+re>=4) ? CONFIG.bareme.exact4b : CONFIG.bareme.exact;
   return Math.sign(pd-pe)===Math.sign(rd-re) ? CONFIG.bareme.bonSens : CONFIG.bareme.mauvais;
 }
 
+// ── Points d'une journée avec pénalité tardive ───────────────
+function calculerPointsJournee(soumissions, matchs, joueurId) {
+  const prono  = soumissions[joueurId];
+  if (!prono) return null; // pas soumis
+  const statut = null; // statuts gérés au niveau du doc
+  let total = matchs.reduce((acc, match, idx) => {
+    const p = prono[idx];
+    if (!p || !match.scoreReel) return acc;
+    return acc + (calculerPoints(p, match.scoreReel) || 0);
+  }, 0);
+  return total;
+}
+
 // ── Résultats ─────────────────────────────────────────────────
 function chargerResultats() {
-  document.getElementById('tab-resultats').innerHTML = `
-    <div style="padding:16px">
-      <div class="journee-nav">
-        <button onclick="changerJourneeR(-1)" ${APP.journeeActive<=1?'disabled':''}>‹</button>
-        <div class="journee-label">Journée <span id="num-j-r">${APP.journeeActive}</span></div>
-        <button onclick="changerJourneeR(1)" ${APP.journeeActive>=CONFIG.nbJournees?'disabled':''}>›</button>
-      </div>
-      <div id="resultats-content"><div class="loading"><div class="spinner"></div></div></div>
-    </div>`;
+  document.getElementById('tab-resultats').innerHTML = '<div style="padding:16px">'
+    + '<div class="journee-nav">'
+    + '<button onclick="changerJourneeR(-1)" ' + (APP.journeeActive<=1?'disabled':'') + '>‹</button>'
+    + '<div style="display:flex;flex-direction:column;align-items:center;gap:4px;position:relative">'
+    + '<div onclick="toggleSelectResultats()" id="resultats-display"'
+    + ' style="font-size:14px;font-weight:700;color:white;cursor:pointer;'
+    + 'display:flex;align-items:center;gap:6px;padding:4px 8px;'
+    + 'border-radius:8px;background:rgba(255,255,255,0.1)">'
+    + '<span id="resultats-display-text">Journée ' + APP.journeeActive + '</span>'
+    + '<span style="font-size:10px;opacity:0.7">▾</span></div>'
+    + '<div id="resultats-dropdown" style="display:none;position:absolute;top:32px;'
+    + 'background:#1F4E79;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,0.4);z-index:200;'
+    + 'max-height:240px;overflow-y:auto;min-width:140px;border:1px solid rgba(255,255,255,0.15)">'
+    + genOptionsResultatsHTML(APP.journeeActive, CONFIG.nbJournees)
+    + '</div></div>'
+    + '<button onclick="changerJourneeR(1)" ' + (APP.journeeActive>=CONFIG.nbJournees?'disabled':'') + '>›</button>'
+    + '</div>'
+    + '<div id="resultats-content"><div class="loading"><div class="spinner"></div></div></div>'
+    + '</div>';
   const unsub = dbSaison('journees', `j${APP.journeeActive}`)
     .onSnapshot(snap => renderResultats(APP.journeeActive, snap.exists ? snap.data() : {}));
   APP.ecouteurs.push(unsub);
 }
+
+function genOptionsResultatsHTML(active, total) {
+  let html = '';
+  for (let i = 1; i <= total; i++) {
+    const bg = (i === active) ? 'rgba(255,255,255,0.18)' : 'transparent';
+    const fw = (i === active) ? '700' : '400';
+    html += '<div onclick="allerJourneeResultats(' + i + ')" class="dd-journee-item"'
+          + ' style="padding:8px 16px;cursor:pointer;font-size:13px;'
+          + 'font-weight:' + fw + ';color:white;background:' + bg + ';white-space:nowrap">'
+          + 'Journée ' + i + '</div>';
+  }
+  return html;
+}
+
+function toggleSelectResultats() {
+  const dd = document.getElementById('resultats-dropdown');
+  if (!dd) return;
+  const isOpen = dd.style.display !== 'none';
+  dd.style.display = isOpen ? 'none' : 'block';
+  if (!isOpen) {
+    const items = dd.querySelectorAll('.dd-journee-item');
+    if (items[APP.journeeActive - 1]) items[APP.journeeActive - 1].scrollIntoView({ block: 'center' });
+    setTimeout(() => {
+      document.addEventListener('click', function closeR(e) {
+        const dd2 = document.getElementById('resultats-dropdown');
+        const btn = document.getElementById('resultats-display');
+        if (dd2 && btn && !dd2.contains(e.target) && !btn.contains(e.target)) {
+          dd2.style.display = 'none';
+          document.removeEventListener('click', closeR);
+        }
+      });
+    }, 10);
+  }
+}
+
+function allerJourneeResultats(j) {
+  const dd = document.getElementById('resultats-dropdown');
+  if (dd) dd.style.display = 'none';
+  if (j === APP.journeeActive) return;
+  APP.journeeActive = j;
+  const badge = document.getElementById('header-journee-badge');
+  if (badge) badge.textContent = 'J.' + j;
+  chargerTab('resultats');
+}
+
 function changerJourneeR(d) {
   const n = APP.journeeActive + d;
-  if (n>=1 && n<=CONFIG.nbJournees) { APP.journeeActive=n; chargerTab('resultats'); }
+  if (n>=1 && n<=CONFIG.nbJournees) {
+    APP.journeeActive = n;
+    const badge = document.getElementById('header-journee-badge');
+    if (badge) badge.textContent = 'J.' + n;
+    chargerTab('resultats');
+  }
 }
 
 function renderResultats(j, data) {
@@ -674,7 +911,8 @@ function renderResultats(j, data) {
     // Colonnes pronostics par joueur
     APP.joueurs.forEach(jo => {
       const p   = soumissions[jo.id]?.[idx];
-      const pts = (p && sr && afficherPtsGains) ? calculerPoints(p, sr) : null;
+      // Toujours calculer les points si scores disponibles
+      const pts = (p && sr) ? calculerPoints(p, sr) : null;
       if (pts !== null) totaux[jo.id] += pts;
 
       const vis = APP.estAdmin
@@ -691,9 +929,10 @@ function renderResultats(j, data) {
       } else if (pts !== null) {
         // Scores disponibles : toujours afficher avec couleur et points
         const cls = pts === 7 ? 'pts-7' : pts === 5 ? 'pts-5' : pts === 3 ? 'pts-3' : 'pts-0';
-        html += `<td class="prono-cell ${cls}">
-          ${p.dom}-${p.ext}<br><small>${pts}pt</small>
-        </td>`;
+        const tardifCell = (data.statuts?.[jo.id]?.tardif) ? ' ⚠️' : '';
+        const pronoStr = p.passé ? '— (passé)' : p.dom + '-' + p.ext;
+        html += '<td class="prono-cell ' + cls + '">'
+          + pronoStr + tardifCell + '<br><small>' + pts + 'pt</small></td>';
       } else {
         // Pas encore de score : prono visible, grisé
         html += `<td class="prono-cell" style="color:var(--gris)">${p.dom}-${p.ext}</td>`;
@@ -714,6 +953,28 @@ function renderResultats(j, data) {
   }
 
   html += '</tbody></table></div>';
+
+  // Appliquer pénalités tardives
+  APP.joueurs.forEach(jo => {
+    const statut = data.statuts?.[jo.id];
+    if (statut?.tardif && statut?.penalite) {
+      totaux[jo.id] = Math.max(0, totaux[jo.id] + statut.penalite);
+    }
+  });
+
+  // Appliquer points par défaut aux non-soumis (si tous les scores sont entrés)
+  const tousScores2 = matchs.length > 0 && matchs.every(m => m.scoreReel !== null);
+  if (tousScores2) {
+    const totauxSoumettants = Object.fromEntries(
+      APP.joueurs.filter(jo => soumissions[jo.id]).map(jo => [jo.id, totaux[jo.id]])
+    );
+    const ptsDefaut = calculerPointsDefaut(totauxSoumettants);
+    APP.joueurs.forEach(jo => {
+      if (!soumissions[jo.id]) {
+        totaux[jo.id] = ptsDefaut;
+      }
+    });
+  }
 
   // Classement journée
   const joueursTries = APP.joueurs
@@ -861,36 +1122,42 @@ function toggleSelectClassement() {
 function selectionnerClassement(val) {
   const dd = document.getElementById('classement-dropdown');
   if (dd) dd.style.display = 'none';
-  APP._classementSelection = val;
+  // Normaliser : 0 et 'saison' sont équivalents
+  const normalized = (val === 'saison' || val === 0 || val === '0') ? 'saison' : parseInt(val);
+  APP._classementSelection = normalized;
   updateNavClassement();
-  // Régénérer le dropdown avec la nouvelle sélection active
-  if (dd) dd.innerHTML = genOptionsClassementHTML(val, CONFIG.nbJournees);
-  if (val === 'saison') {
-    document.getElementById('classement-display-text').textContent = '🏆 Saison complète';
+  if (dd) dd.innerHTML = genOptionsClassementHTML(normalized, CONFIG.nbJournees);
+  if (normalized === 'saison') {
+    const el = document.getElementById('classement-display-text');
+    if (el) el.textContent = '🏆 Saison complète';
     chargerClassementSaison();
   } else {
-    document.getElementById('classement-display-text').textContent = 'Journée ' + val;
-    chargerClassementJournee(val);
+    const el = document.getElementById('classement-display-text');
+    if (el) el.textContent = 'Journée ' + normalized;
+    chargerClassementJournee(normalized);
   }
 }
 
 function changerTypeClassement(delta) {
   const cur = APP._classementSelection;
   let next;
+  // Toujours travailler avec des entiers pour les journées
+  const curNum = (cur === 'saison') ? 0 : parseInt(cur);
   if (delta === -1) {
-    next = cur === 'saison' ? 'saison' : (cur <= 1 ? 'saison' : cur - 1);
+    next = curNum <= 1 ? 'saison' : curNum - 1;
   } else {
-    next = cur === 'saison' ? 1 : Math.min(cur + 1, CONFIG.nbJournees);
+    next = curNum === 0 ? 1 : Math.min(curNum + 1, CONFIG.nbJournees);
   }
   selectionnerClassement(next);
 }
 
 function updateNavClassement() {
   const cur = APP._classementSelection;
+  const curNum = (cur === 'saison') ? 0 : parseInt(cur);
   const prev = document.getElementById('cl-prev');
   const next = document.getElementById('cl-next');
   if (prev) prev.disabled = (cur === 'saison');
-  if (next) next.disabled = (cur === CONFIG.nbJournees);
+  if (next) next.disabled = (curNum >= CONFIG.nbJournees);
   const sub = document.getElementById('cl-subtitle');
   if (sub) sub.textContent = cur === 'saison'
     ? saisonLabel(APP.saisonAffichee || saisonKey(CONFIG.saison))
@@ -1435,4 +1702,21 @@ function showToast(msg,type='default') {
 // ── Utilitaires ──────────────────────────────────────────────
 function genererMatchsVides() {
   return Array.from({length:CONFIG.nbMatchsParJournee},(_,i)=>({domicile:`Équipe ${i+1} D`,exterieur:`Équipe ${i+1} E`,date:'',scoreReel:null}));
+}
+
+// ── Sauvegarde règles soumissions tardives (session uniquement) ─
+// Pour rendre permanent : modifier config.js
+function sauverRegleSansProno(val) {
+  CONFIG.regles.sansPronostic = val;
+  showToast('Règle mise à jour (non permanente — modifiez config.js)', 'warning');
+}
+function sauverPenalite(val) {
+  if (isNaN(val) || val > 0) return;
+  CONFIG.regles.penaliteRetard = val;
+  showToast('Pénalité mise à jour (non permanente — modifiez config.js)', 'warning');
+}
+function sauverDelaiReouverture(val) {
+  if (isNaN(val) || val < 1) return;
+  CONFIG.regles.delaiReouvretureHeures = val;
+  showToast('Délai mis à jour (non permanent — modifiez config.js)', 'warning');
 }
