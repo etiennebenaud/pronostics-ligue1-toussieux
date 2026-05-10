@@ -688,15 +688,15 @@ function renderResultats(j, data) {
       } else if (!sr) {
         // Score pas encore entré : afficher le prono sans couleur
         html += `<td class="prono-cell" style="color:var(--gris)">${p.dom}-${p.ext}</td>`;
-      } else if (!afficherPtsGains) {
-        // Saison archivée ou journée ouverte : prono visible mais grisé, sans points
-        html += `<td class="prono-cell" style="color:var(--gris)">${p.dom}-${p.ext}</td>`;
-      } else {
-        // Saison courante + journée fermée : couleur selon les points
+      } else if (pts !== null) {
+        // Scores disponibles : toujours afficher avec couleur et points
         const cls = pts === 7 ? 'pts-7' : pts === 5 ? 'pts-5' : pts === 3 ? 'pts-3' : 'pts-0';
         html += `<td class="prono-cell ${cls}">
           ${p.dom}-${p.ext}<br><small>${pts}pt</small>
         </td>`;
+      } else {
+        // Pas encore de score : prono visible, grisé
+        html += `<td class="prono-cell" style="color:var(--gris)">${p.dom}-${p.ext}</td>`;
       }
     });
 
@@ -783,24 +783,120 @@ async function saisirScore(j,idx,cote,val) {
 // ── Classement ────────────────────────────────────────────────
 function chargerClassement() {
   const container = document.getElementById('tab-classement');
-
-  // Sélecteur : Saison complète OU journée spécifique
-  const optionsJ = '<option value="saison">🏆 Saison complète</option>'
-    + Array.from({length: CONFIG.nbJournees}, (_, i) =>
-        '<option value="' + (i+1) + '">Journée ' + (i+1) + '</option>'
-      ).join('');
-
   container.innerHTML = '<div style="padding:16px">'
-    + '<select id="select-classement-type" onchange="changerTypeClassement()"'
-    + ' style="width:100%;padding:10px 12px;border:2px solid var(--color-border-primary);'
-    + 'border-radius:10px;font-size:14px;font-weight:500;margin-bottom:16px;'
-    + 'background:var(--color-background-primary);color:var(--color-text-primary);outline:none">'
-    + optionsJ + '</select>'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;'
+    + 'margin-bottom:16px;background:#1F4E79;border-radius:12px;padding:10px 14px;">'
+    + '<button onclick="changerTypeClassement(-1)" id="cl-prev"'
+    + ' style="background:rgba(255,255,255,0.15);border:none;color:white;'
+    + 'width:32px;height:32px;border-radius:50%;font-size:16px;cursor:pointer">‹</button>'
+    + '<div style="position:relative;text-align:center">'
+    + '<div onclick="toggleSelectClassement()" id="classement-display"'
+    + ' style="font-size:14px;font-weight:700;color:white;cursor:pointer;'
+    + 'display:flex;align-items:center;gap:6px;padding:4px 10px;'
+    + 'border-radius:8px;background:rgba(255,255,255,0.1)">'
+    + '<span id="classement-display-text">🏆 Saison complète</span>'
+    + '<span style="font-size:10px;opacity:0.7">▾</span></div>'
+    + '<div id="classement-dropdown" style="display:none;position:absolute;top:36px;left:50%;'
+    + 'transform:translateX(-50%);background:#1F4E79;border-radius:10px;'
+    + 'box-shadow:0 4px 20px rgba(0,0,0,0.4);z-index:200;'
+    + 'max-height:240px;overflow-y:auto;min-width:160px;'
+    + 'border:1px solid rgba(255,255,255,0.15)">'
+    + genOptionsClassementHTML('saison', CONFIG.nbJournees)
+    + '</div>'
+    + '<div style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:2px" id="cl-subtitle"></div>'
+    + '</div>'
+    + '<button onclick="changerTypeClassement(1)" id="cl-next"'
+    + ' style="background:rgba(255,255,255,0.15);border:none;color:white;'
+    + 'width:32px;height:32px;border-radius:50%;font-size:16px;cursor:pointer">›</button>'
+    + '</div>'
     + '<div id="classement-content"><div class="loading"><div class="spinner"></div>Calcul...</div></div>'
     + '</div>';
 
+  APP._classementSelection = 'saison';
+  updateNavClassement();
   chargerClassementSaison();
 }
+
+function genOptionsClassementHTML(active, total) {
+  const isSaison = active === 'saison';
+  const items = [{ val: 'saison', label: '🏆 Saison complète' }];
+  for (let i = 1; i <= total; i++) items.push({ val: i, label: 'Journée ' + i });
+
+  return items.map(item => {
+    const isActive = item.val === active;
+    const bg = isActive ? 'rgba(255,255,255,0.18)' : 'transparent';
+    const fw = isActive ? '700' : '400';
+    const valStr = typeof item.val === 'string' ? JSON.stringify(item.val) : item.val;
+    return '<div onclick="selectionnerClassement(' + valStr + ')" class="dd-journee-item"'
+         + ' style="padding:8px 16px;cursor:pointer;font-size:13px;'
+         + 'font-weight:' + fw + ';color:white;background:' + bg + ';white-space:nowrap">'
+         + item.label + '</div>';
+  }).join('');
+}
+
+
+function toggleSelectClassement() {
+  const dd = document.getElementById('classement-dropdown');
+  if (!dd) return;
+  const isOpen = dd.style.display !== 'none';
+  dd.style.display = isOpen ? 'none' : 'block';
+  if (!isOpen) {
+    // Scroller sur la sélection active
+    const items = dd.querySelectorAll('.dd-journee-item');
+    const idx = APP._classementSelection === 'saison' ? 0 : APP._classementSelection;
+    if (items[idx]) items[idx].scrollIntoView({ block: 'center' });
+    setTimeout(() => {
+      document.addEventListener('click', function closeCL(e) {
+        const dd2 = document.getElementById('classement-dropdown');
+        const btn = document.getElementById('classement-display');
+        if (dd2 && btn && !dd2.contains(e.target) && !btn.contains(e.target)) {
+          dd2.style.display = 'none';
+          document.removeEventListener('click', closeCL);
+        }
+      });
+    }, 10);
+  }
+}
+
+function selectionnerClassement(val) {
+  const dd = document.getElementById('classement-dropdown');
+  if (dd) dd.style.display = 'none';
+  APP._classementSelection = val;
+  updateNavClassement();
+  // Régénérer le dropdown avec la nouvelle sélection active
+  if (dd) dd.innerHTML = genOptionsClassementHTML(val, CONFIG.nbJournees);
+  if (val === 'saison') {
+    document.getElementById('classement-display-text').textContent = '🏆 Saison complète';
+    chargerClassementSaison();
+  } else {
+    document.getElementById('classement-display-text').textContent = 'Journée ' + val;
+    chargerClassementJournee(val);
+  }
+}
+
+function changerTypeClassement(delta) {
+  const cur = APP._classementSelection;
+  let next;
+  if (delta === -1) {
+    next = cur === 'saison' ? 'saison' : (cur <= 1 ? 'saison' : cur - 1);
+  } else {
+    next = cur === 'saison' ? 1 : Math.min(cur + 1, CONFIG.nbJournees);
+  }
+  selectionnerClassement(next);
+}
+
+function updateNavClassement() {
+  const cur = APP._classementSelection;
+  const prev = document.getElementById('cl-prev');
+  const next = document.getElementById('cl-next');
+  if (prev) prev.disabled = (cur === 'saison');
+  if (next) next.disabled = (cur === CONFIG.nbJournees);
+  const sub = document.getElementById('cl-subtitle');
+  if (sub) sub.textContent = cur === 'saison'
+    ? saisonLabel(APP.saisonAffichee || saisonKey(CONFIG.saison))
+    : '';
+}
+
 
 function changerTypeClassement() {
   const val = document.getElementById('select-classement-type')?.value;
@@ -843,7 +939,7 @@ function chargerClassementSaison() {
 
     const sorted = APP.joueurs.slice().sort((a, b) => totaux[b.id].pts - totaux[a.id].pts);
     const monId  = APP.joueurActif?.id;
-    let html = '<div class="card"><div class="card-title">🏆 Classement général — ' + CONFIG.saison + '</div>';
+    let html = '<div class="card"><div class="card-title">🏆 Classement général — ' + saisonLabel(APP.saisonAffichee || saisonKey(CONFIG.saison)) + '</div>';
     sorted.forEach((jo, i) => {
       const r = i + 1;
       html += '<div class="classement-row' + (jo.id === monId ? ' moi' : '') + '">'
@@ -888,9 +984,9 @@ function chargerClassementJournee(j) {
       }, 0)]));
 
     // Trier
+    // Trier tous les joueurs (soumis ou non) par points décroissants
     const sorted = APP.joueurs.slice()
-      .filter(jo => soumissions[jo.id]) // seulement ceux qui ont soumis
-      .sort((a, b) => ptsJ[b.id] - ptsJ[a.id]);
+      .sort((a, b) => (ptsJ[b.id] || 0) - (ptsJ[a.id] || 0));
 
     const monId   = APP.joueurActif?.id;
     const aTousScores = matchs.length > 0 && matchs.every(m => m.scoreReel !== null);
@@ -911,24 +1007,17 @@ function chargerClassementJournee(j) {
       const gain = [CONFIG.gains.premier, CONFIG.gains.deuxieme, CONFIG.gains.troisieme][rang-1] || 0;
       const isMe = jo.id === monId;
 
-      html += '<div class="classement-row' + (isMe ? ' moi' : '') + '">'
-        + '<div class="rang-badge ' + (rang <= 3 ? 'rang-' + rang : 'rang-other') + '">'
-        + (medals[rang] || rang) + '</div>'
+      const aSoumis2 = !!soumissions[jo.id];
+      html += '<div class="classement-row' + (isMe ? ' moi' : '') + '"'
+        + (aSoumis2 ? '' : ' style="opacity:0.4"') + '>'
+        + '<div class="rang-badge ' + (aSoumis2 && rang <= 3 ? 'rang-' + rang : 'rang-other') + '">'
+        + (aSoumis2 ? (medals[rang] || rang) : '—') + '</div>'
         + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + '</div>'
-        + '<div class="classement-pts">' + pts + '<span>pts</span></div>'
-        + (aTousScores && gain > 0
+        + '<div class="classement-pts">' + (aSoumis2 ? pts : '0') + '<span>pts</span></div>'
+        + (aTousScores && gain > 0 && aSoumis2
             ? '<div class="classement-gains">+' + gain + '€</div>'
             : '<div></div>')
         + '</div>';
-    });
-
-    // Joueurs n'ayant pas soumis
-    APP.joueurs.filter(jo => !soumissions[jo.id]).forEach(jo => {
-      html += '<div class="classement-row" style="opacity:0.35">'
-        + '<div class="rang-badge rang-other">—</div>'
-        + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + '</div>'
-        + '<div class="classement-pts">—<span>ns</span></div>'
-        + '<div></div></div>';
     });
 
     html += '</div>';
