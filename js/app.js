@@ -157,8 +157,10 @@ async function demarrerApp() {
   APP.saisonAffichee = saisonKey(CONFIG.saison);
   await chargerListeSaisons();
   await initialiserSaison(APP.saisonAffichee);
-  // Charger les équipes de la saison courante
-  APP.equipesL1 = await fetchEquipesSaison(saisonApiFormat(CONFIG.saison));
+  // Charger les équipes en arrière-plan (non-bloquant)
+  fetchEquipesSaison(saisonApiFormat(CONFIG.saison))
+    .then(eq => { if (eq && eq.length > 0) APP.equipesL1 = eq; })
+    .catch(() => {}); // silencieux si indispo
   // Détection automatique de la journée courante
   try {
     APP.journeeActive = await detecterJourneeCouranteFirestore();
