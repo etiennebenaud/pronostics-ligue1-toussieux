@@ -64,12 +64,12 @@ const CONFIG = {
   // ── Firebase ─────────────────────────────────────────────
   // Collez ici les valeurs de votre projet Firebase
   firebase: {
-    apiKey:            "VOTRE_API_KEY",
-    authDomain:        "VOTRE_PROJECT.firebaseapp.com",
-    projectId:         "VOTRE_PROJECT_ID",
-    storageBucket:     "VOTRE_PROJECT.appspot.com",
-    messagingSenderId: "VOTRE_SENDER_ID",
-    appId:             "VOTRE_APP_ID",
+    apiKey:            "AIzaSyC8C4GIoFmdRQxXTcMv8Dd0j7Y8IHvTP3c",  // ← doit être votre vraie clé
+    authDomain:        "prono-ligue1-toussieux.firebaseapp.com",
+    projectId:         "prono-ligue1-toussieux",
+    storageBucket:     "prono-ligue1-toussieux.firebasestorage.app",
+    messagingSenderId: "193024277227",
+    appId:             "1:193024277227:web:789258d8b246b002e65cae",
   },
 
   // ── Apparence ────────────────────────────────────────────
