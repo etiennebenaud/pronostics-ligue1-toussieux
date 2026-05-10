@@ -53,13 +53,20 @@ function saisonApiFormat(s) {
 // ── Charger une journée depuis l'API ────────────────────────
 async function fetchJourneeAPI(numJournee, saisonLabel, tentative = 1) {
   const saison = saisonApiFormat(saisonLabel || CONFIG.saison);
-  const url = `https://thesportsdb.com/api/v1/json/3/eventsround.php` +
-              `?id=${SPORTSDB_LEAGUE}&r=${numJournee}&s=${saison}`;
+  // Essayer sans www d'abord, puis avec www en fallback
+  const urls = [
+    `https://thesportsdb.com/api/v1/json/3/eventsround.php?id=${SPORTSDB_LEAGUE}&r=${numJournee}&s=${saison}`,
+    `https://www.thesportsdb.com/api/v1/json/3/eventsround.php?id=${SPORTSDB_LEAGUE}&r=${numJournee}&s=${saison}`,
+  ];
+  const url = urls[(tentative - 1) % urls.length];
   try {
-    const resp = await fetch(url);
+    const resp = await fetch(url, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      mode: 'cors',
+    });
     if (!resp.ok) {
       if (resp.status === 429 && tentative <= 3) {
-        // Rate limit : attendre 2s et réessayer
         console.warn(`Rate limit J${numJournee}, retry ${tentative}/3...`);
         await new Promise(r => setTimeout(r, 2000 * tentative));
         return fetchJourneeAPI(numJournee, saisonLabel, tentative + 1);
