@@ -714,3 +714,11 @@ body {
   font-size: 14px;
   padding: 8px;
 }
+
+/* ── Dropdown journée custom ─────────────────────────────── */
+.dd-journee-item:hover {
+  background: rgba(255,255,255,0.12) !important;
+}
+#journee-dropdown::-webkit-scrollbar { width: 4px; }
+#journee-dropdown::-webkit-scrollbar-track { background: transparent; }
+#journee-dropdown::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 2px; }
