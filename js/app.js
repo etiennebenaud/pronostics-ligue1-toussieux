@@ -325,8 +325,19 @@ function chargerGrille() {
     <div style="padding:16px">
       <div class="journee-nav">
         <button onclick="changerJournee(-1)" ${APP.journeeActive<=1?'disabled':''}>‹</button>
-        <div><div class="journee-label">Journée <span id="num-journee">${APP.journeeActive}</span></div>
-          <div class="journee-deadline" id="deadline-label">Chargement...</div></div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+          <select id="select-journee"
+            onchange="allerJournee(parseInt(this.value))"
+            style="background:transparent;border:none;color:white;font-size:14px;
+                   font-weight:700;text-align:center;cursor:pointer;outline:none;
+                   appearance:none;-webkit-appearance:none;padding:0 4px;
+                   max-width:160px">
+            ${Array.from({length: CONFIG.nbJournees}, (_, i) => i + 1)
+              .map(j => `<option value="${j}" ${j === APP.journeeActive ? 'selected' : ''}
+                style="background:#1F4E79;color:white">Journée ${j}</option>`).join('')}
+          </select>
+          <div class="journee-deadline" id="deadline-label">Chargement...</div>
+        </div>
         <button onclick="changerJournee(1)" ${APP.journeeActive>=CONFIG.nbJournees?'disabled':''}>›</button>
       </div>
       <div class="statut-bar" id="statut-bar"></div>
@@ -336,6 +347,15 @@ function chargerGrille() {
   const unsub = dbSaison('journees', `j${APP.journeeActive}`)
     .onSnapshot(snap => renderGrille(APP.journeeActive, snap.exists ? snap.data() : {}));
   APP.ecouteurs.push(unsub);
+}
+
+function allerJournee(j) {
+  if (j >= 1 && j <= CONFIG.nbJournees && j !== APP.journeeActive) {
+    APP.journeeActive = j;
+    const badge = document.getElementById('header-journee-badge');
+    if (badge) badge.textContent = 'J.' + j;
+    chargerTab('grille');
+  }
 }
 
 function changerJournee(d) {
