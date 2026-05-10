@@ -60,11 +60,15 @@ async function fetchJourneeAPI(numJournee, saisonLabel, tentative = 1) {
   ];
   const url = urls[(tentative - 1) % urls.length];
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
     const resp = await fetch(url, {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
       mode: 'cors',
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
     if (!resp.ok) {
       if (resp.status === 429 && tentative <= 3) {
         console.warn(`Rate limit J${numJournee}, retry ${tentative}/3...`);
@@ -88,7 +92,14 @@ async function fetchJourneeAPI(numJournee, saisonLabel, tentative = 1) {
       idApi: e.idEvent || null,
     }));
   } catch(e) {
-    console.error(`fetchJourneeAPI J${numJournee}:`, e);
+    const isAbort = e.name === 'AbortError';
+    const msg = isAbort ? 'Timeout 8s' : e.message;
+    console.warn(`fetchJourneeAPI J${numJournee} (tentative ${tentative}): ${msg}`);
+    // Retry automatique avec l'autre URL si encore des tentatives
+    if (tentative < 3) {
+      await new Promise(r => setTimeout(r, 1000 * tentative));
+      return fetchJourneeAPI(numJournee, saisonLabel, tentative + 1);
+    }
     return null;
   }
 }
