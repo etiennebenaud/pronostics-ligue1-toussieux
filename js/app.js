@@ -1,165 +1,2248 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="theme-color" content="#E8500A">
-  <meta name="description" content="Pronostics Ligue 1 - Application de pronostics pour amis">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" id="meta-app-title" content="Pronostics L1">
-  <title id="page-title">⚽ Pronostics L1</title>
-  <link rel="manifest" href="manifest.json">
-  <link rel="apple-touch-icon" href="assets/icon-192.png">
-  <link rel="stylesheet" href="css/style.css?v=202605102019">
-</head>
-<body>
-<div id="app">
+// ============================================================
+// APP.JS — Logique principale (version propre, sans conflits)
+// ============================================================
 
-  <!-- Bannière installation PWA -->
-  <div id="install-banner" class="install-banner" style="display:none">
-    <span>📱 Installer l'app sur votre téléphone</span>
-    <button id="btn-install">Installer</button>
-    <button id="btn-close-install" class="close-banner">✕</button>
-  </div>
+const APP = {
+  db: null, joueurActif: null, joueurs: [],
+  estAdmin: false, journeeActive: 1,
+  ecouteurs: [], deferredInstall: null,
+  saisonAffichee: null,  // null = saison courante
+  listeSaisons: [],
+  saisonEstCloturee: false, // true si la saison affichée est clôturée
+  equipesL1: [],  // chargées dynamiquement depuis TheSportsDB
+};
 
-  <!-- Header -->
-  <header class="app-header" id="app-header" style="display:none">
-    <div class="header-top-row">
-      <div class="header-logo-zone">
-        <div class="header-l1-badge">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="32" height="32">
-            <rect width="120" height="120" rx="16" fill="#0A1628"/>
-            <path d="M22 18 L22 90 L66 90 L66 74 L40 74 L40 18 Z" fill="white"/>
-            <path d="M76 18 L76 90 L94 90 L94 18 Z" fill="white"/>
-            <rect x="64" y="30" width="12" height="16" fill="white"/>
-          </svg>
+// ── Démarrage ────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  console.log('DOMContentLoaded déclenché');
+  document.documentElement.style.setProperty('--orange', CONFIG.theme.couleurPrimaire);
+  document.documentElement.style.setProperty('--bleu',   CONFIG.theme.couleurSecondaire);
+  document.documentElement.style.setProperty('--vert',   CONFIG.theme.couleurVert);
+  // ── Appliquer le thème depuis config.js ────────────────────
+  const nomApp  = CONFIG.theme.nomApp  || "Pronostics L1";
+  const sousNom = CONFIG.theme.descriptionApp?.split(' · ')[0] || nomApp;
+
+  // Titre principal header
+  const h1El = document.querySelector('.app-header h1');
+  if (h1El) h1El.textContent = nomApp;
+
+  // Sous-titre (nom du groupe)
+  const subEl = document.getElementById('app-subtitle');
+  if (subEl) subEl.textContent = sousNom;
+
+  // Titre login
+  const loginTitleEl = document.getElementById('login-title');
+  if (loginTitleEl) loginTitleEl.textContent = nomApp;
+
+  // Titre de page (onglet navigateur)
+  document.title = '⚽ ' + nomApp;
+
+  // Meta PWA
+  const metaTitleEl = document.getElementById('meta-app-title');
+  if (metaTitleEl) metaTitleEl.setAttribute('content', nomApp);
+
+  // Saison dans header
+  const headerSaisonEl = document.getElementById('header-saison');
+  if (headerSaisonEl) headerSaisonEl.textContent = CONFIG.saison;
+
+  initFirebase();
+  console.log('Après initFirebase - APP.db:', !!APP.db);
+
+  // Restaurer session
+  const savedAdmin = localStorage.getItem('pronostics_admin');
+  const savedId    = localStorage.getItem('pronostics_joueur_id');
+  if (savedAdmin === '1') { APP.estAdmin = true; await demarrerApp(); return; }
+  if (savedId) {
+    await initJoueurs();
+    const j = APP.joueurs.find(j => j.id === savedId);
+    if (j) { APP.joueurActif = j; await demarrerApp(); return; }
+  }
+  // Attacher les listeners du formulaire login
+  document.getElementById('login-form')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    await traiterConnexion(document.getElementById('login-input').value.trim().toUpperCase());
+  });
+  document.getElementById('login-input')?.addEventListener('input', () => {
+    document.getElementById('login-error')?.classList.remove('show');
+  });
+
+  afficherLogin();
+
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault(); APP.deferredInstall = e;
+    const b = document.getElementById('install-banner');
+    if (b) b.style.display = 'flex';
+  });
+  document.getElementById('btn-install')?.addEventListener('click', async () => {
+    if (!APP.deferredInstall) return;
+    APP.deferredInstall.prompt();
+    const { outcome } = await APP.deferredInstall.userChoice;
+    if (outcome === 'accepted') document.getElementById('install-banner').style.display = 'none';
+  });
+  document.getElementById('btn-close-install')?.addEventListener('click', () => {
+    document.getElementById('install-banner').style.display = 'none';
+  });
+});
+
+function initFirebase() {
+  try {
+    // Vérifier si une app Firebase existe déjà
+    const existingApp = firebase.apps && firebase.apps.length > 0
+      ? firebase.apps[0]
+      : firebase.initializeApp(CONFIG.firebase);
+    APP.db = firebase.firestore();
+    APP.db.enablePersistence({ synchronizeTabs: true }).catch(() => {});
+    console.log('Firebase OK - db:', !!APP.db);
+  } catch(e) {
+    console.error('Firebase init error:', e);
+    // Tenter de récupérer l'app existante
+    try {
+      APP.db = firebase.firestore();
+      console.log('Firebase récupéré - db:', !!APP.db);
+    } catch(e2) {
+      console.error('Firebase récupération impossible:', e2);
+    }
+  }
+}
+
+// ── Login ────────────────────────────────────────────────────
+function afficherLogin() {
+  console.log('afficherLogin appelé');
+  document.getElementById('section-login').style.display = 'flex';
+  document.getElementById('section-app').style.display   = 'none';
+  setTimeout(() => document.getElementById('login-input')?.focus(), 100);
+}
+
+
+async function traiterConnexion(code) {
+  console.log('traiterConnexion:', code, '| APP.db:', !!APP.db);
+  if (!code) return;
+
+  // Guard : si Firebase pas initialisé, réessayer
+  if (!APP.db) {
+    console.warn('APP.db null, réinitialisation Firebase...');
+    initFirebase();
+    if (!APP.db) {
+      showToast('Erreur de connexion Firebase. Rechargez la page.', 'error');
+      return;
+    }
+  }
+
+  if (code === CONFIG.codeAdmin.toUpperCase()) {
+    APP.estAdmin = true; APP.joueurActif = null;
+    localStorage.setItem('pronostics_admin', '1');
+    localStorage.removeItem('pronostics_joueur_id');
+    await demarrerApp(); showToast('Mode admin activé 🔧', 'warning'); return;
+  }
+  await initJoueurs();
+  console.log('Joueurs chargés:', APP.joueurs.length, APP.joueurs.map(j=>j.code));
+  const joueur = APP.joueurs.find(j => j.code.toUpperCase() === code);
+  if (joueur) {
+    APP.joueurActif = joueur; APP.estAdmin = false;
+    localStorage.setItem('pronostics_joueur_id', joueur.id);
+    localStorage.removeItem('pronostics_admin');
+    await demarrerApp(); return;
+  }
+  const err = document.getElementById('login-error');
+  if (err) { err.textContent = '❌ Code incorrect.'; err.classList.add('show'); }
+  const inp = document.getElementById('login-input');
+  if (inp) { inp.value = ''; inp.focus(); }
+}
+
+// ── App principale ────────────────────────────────────────────
+async function demarrerApp() {
+  if (APP.joueurs.length === 0) await initJoueurs();
+  document.getElementById('section-login').style.display = 'none';
+  document.getElementById('section-app').style.display   = 'block';
+
+  const btnAdmin = document.getElementById('tab-admin-btn');
+  if (btnAdmin) {
+    if (APP.estAdmin) {
+      btnAdmin.removeAttribute('style');
+    } else {
+      btnAdmin.setAttribute('style', 'display:none !important');
+    }
+  }
+
+  const banner = document.getElementById('user-banner');
+  if (banner) {
+    const jo = APP.joueurActif;
+    banner.innerHTML = jo
+      ? `<div class="user-avatar">${jo.emoji}</div>
+         <div class="user-info"><div class="user-name">${jo.nom}</div><div class="user-team">${jo.equipe||''}</div></div>
+         <button class="btn-logout" onclick="deconnexion()">Se déconnecter</button>`
+      : `<div class="user-avatar">🔧</div>
+         <div class="user-info"><div class="user-name">Administrateur</div><div class="user-team">Mode admin</div></div>
+         <button class="btn-logout" onclick="deconnexion()">Se déconnecter</button>`;
+  }
+  APP.journeeActive  = CONFIG.regles.journeeDefaut > 0 ? CONFIG.regles.journeeDefaut : 1;
+  APP.saisonAffichee = saisonKey(CONFIG.saison);
+  // La saison courante n'est jamais clôturée par définition
+  APP.saisonEstCloturee = false;
+  await chargerListeSaisons();
+  await initialiserSaison(APP.saisonAffichee);
+  // Charger les équipes en arrière-plan (non-bloquant)
+  fetchEquipesSaison(saisonApiFormat(CONFIG.saison))
+    .then(eq => { if (eq && eq.length > 0) APP.equipesL1 = eq; })
+    .catch(() => {}); // silencieux si indispo
+  // Détection automatique de la journée courante
+  try {
+    APP.journeeActive = await detecterJourneeCouranteFirestore();
+  } catch(e) {
+    APP.journeeActive = CONFIG.regles.journeeDefaut > 0 ? CONFIG.regles.journeeDefaut : 1;
+  }
+  const jBadge = document.getElementById('header-journee-badge');
+  if (jBadge) jBadge.textContent = 'J.' + APP.journeeActive;
+  chargerTab('grille');
+}
+
+function deconnexion() {
+  APP.ecouteurs.forEach(fn => fn()); APP.ecouteurs = [];
+  APP.joueurActif = null; APP.estAdmin = false; APP.joueurs = [];
+  localStorage.removeItem('pronostics_joueur_id');
+  localStorage.removeItem('pronostics_admin');
+  afficherLogin();
+}
+
+// ── Navigation ────────────────────────────────────────────────
+function chargerTab(tabId) {
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tabId));
+  document.querySelectorAll('.tab-content').forEach(s => s.classList.toggle('active', s.id === 'tab-' + tabId));
+  APP.ecouteurs.forEach(fn => fn()); APP.ecouteurs = [];
+  const fns = { grille: chargerGrille, resultats: chargerResultats, classement: chargerClassement,
+                bonus: chargerBonus, profil: chargerProfil, admin: chargerAdmin, palmares: chargerPalmares };
+  fns[tabId]?.();
+}
+document.querySelectorAll('.nav-tab').forEach(tab => tab.addEventListener('click', () => chargerTab(tab.dataset.tab)));
+
+// ── Admin ────────────────────────────────────────────────────
+function chargerAdmin() {
+  // Construire les options de la liste déroulante journées
+  const nbJ = CONFIG.nbJournees;
+  const optionsJournees = Array.from({length: nbJ}, (_, i) => {
+    const j = i + 1;
+    const isCourante = j === APP.journeeActive;
+    return `<option value="${j}" ${isCourante ? 'selected' : ''}>
+      Journée ${j}${isCourante ? ' (courante)' : ''}
+    </option>`;
+  }).join('');
+
+  document.getElementById('tab-admin').innerHTML = `
+    <div style="padding:16px">
+
+      <!-- ── Journée ── -->
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title" style="margin-bottom:12px">📅 Gestion d'une journée</div>
+
+        <label class="profil-label">Sélectionner la journée</label>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+          <select id="admin-select-journee"
+            onchange="adminMettreAJourBoutonJournee()"
+            style="flex:1;padding:10px 12px;border:2px solid var(--color-border-primary);
+                   border-radius:10px;font-size:14px;font-weight:500;
+                   background:var(--color-background-primary);
+                   color:var(--color-text-primary);outline:none;cursor:pointer">
+            ${optionsJournees}
+          </select>
+          <button onclick="adminNaviguerVersJournee()"
+            style="background:var(--bleu-l);color:var(--bleu);border:none;
+                   border-radius:8px;padding:10px 12px;font-size:12px;
+                   font-weight:500;cursor:pointer;white-space:nowrap">
+            🎯 Aller à cette journée
+          </button>
         </div>
-        <div class="header-titles">
-          <h1>Pronostics L1</h1>
-          <div class="subtitle"><span id="app-subtitle">Toussi'Pronos</span> · <span id="header-saison">2026/2027</span></div>
+
+        <button class="btn-primary" id="btn-gerer-journee"
+          onclick="adminOuvrirJourneeSelectionnee()"
+          style="width:100%;margin-bottom:4px">
+          ✏️ Gérer la Journée ${APP.journeeActive}
+        </button>
+        <p class="text-sm text-muted">
+          Saisir / modifier les matchs, dates, scores et deadline.
+        </p>
+      </div>
+
+      <!-- ── Calendrier ── -->
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title" style="margin-bottom:8px">🔄 Calendrier & équipes</div>
+        <button class="btn-primary" onclick="ouvrirCalendrierAdmin()" style="width:100%;margin-bottom:8px">
+          📡 Charger depuis TheSportsDB
+        </button>
+        <p class="text-sm text-muted" style="margin-bottom:10px">Charge les matchs et scores pour une plage de journées.</p>
+        <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);
+                    padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div>
+            <p style="font-size:12px;font-weight:500;color:var(--color-text-primary);margin:0 0 2px">
+              Équipes ${CONFIG.saison}
+            </p>
+            <p style="font-size:11px;color:var(--color-text-secondary);margin:0">
+              ${APP.equipesL1.length > 0
+                ? APP.equipesL1.slice(0,3).join(', ') + (APP.equipesL1.length > 3 ? ` +${APP.equipesL1.length-3}` : '')
+                : 'Non chargées'}
+            </p>
+          </div>
+          <button id="btn-refresh-equipes" onclick="rafraichirEquipes().then(()=>chargerAdmin())"
+            style="background:var(--bleu-l);color:var(--bleu);border:none;
+                   border-radius:var(--border-radius-md);padding:7px 10px;
+                   font-size:11px;font-weight:500;cursor:pointer;white-space:nowrap;flex-shrink:0">
+            🔄 Rafraîchir
+          </button>
         </div>
       </div>
-      <div class="header-journee-badge" id="header-journee-badge">J.1</div>
-    </div>
-  </header>
 
-  <!-- ══ ÉCRAN LOGIN ══════════════════════════════════════ -->
-  <div id="section-login" style="display:none">
-    <div class="login-card">
-      <div class="login-logo">⚽</div>
-      <div class="login-title" id="login-title">Pronostics L1</div>
-      <div class="login-sub">Entrez votre code pour accéder à l'application</div>
-      <form id="login-form" onsubmit="return false">
-        <label class="login-label" for="login-input">Votre code :</label>
-        <input type="text" id="login-input" class="login-input"
-          maxlength="10" autocomplete="off" autocorrect="off"
-          autocapitalize="characters" spellcheck="false" placeholder="XXXX00" required>
-        <button type="submit" class="btn-login">🔐 Accéder</button>
-      </form>
-      <div id="login-error" class="login-error"></div>
-      <p class="text-sm text-center" style="margin-top:16px">
-        Pas de code ? Contactez l'organisateur.
-      </p>
-    </div>
-  </div>
-
-  <!-- ══ APP PRINCIPALE ══════════════════════════════════ -->
-  <div id="section-app" style="display:none">
-
-    <!-- Bannière joueur connecté -->
-    <div id="user-banner" class="user-banner"></div>
-
-    <!-- Navigation -->
-    <nav class="nav-tabs" id="nav-tabs">
-      <div class="nav-tabs-inner">
-        <button class="nav-tab active" data-tab="grille">
-          <span class="tab-icon">🎯</span>
-          <span class="tab-label">Grille</span>
+      <!-- ── Joueurs ── -->
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title" style="margin-bottom:8px">👥 Joueurs</div>
+        <button class="btn-primary" onclick="chargerAdminJoueurs()" style="width:100%;margin-bottom:4px">
+          👥 Gérer les joueurs (${APP.joueurs.length} actif${APP.joueurs.length>1?'s':''})
         </button>
-        <button class="nav-tab" data-tab="resultats">
-          <span class="tab-icon">📊</span>
-          <span class="tab-label">Résultats</span>
-        </button>
-        <button class="nav-tab" data-tab="classement">
-          <span class="tab-icon">🏆</span>
-          <span class="tab-label">Classement</span>
-        </button>
-        <button class="nav-tab" data-tab="bonus">
-          <span class="tab-icon">🎖️</span>
-          <span class="tab-label">Bonus</span>
-        </button>
-        <button class="nav-tab" data-tab="profil">
-          <span class="tab-icon">👤</span>
-          <span class="tab-label">Profil</span>
-        </button>
-        <button class="nav-tab" data-tab="palmares">
-          <span class="tab-icon">🏅</span>
-          <span class="tab-label">Palmarès</span>
-        </button>
-        <button class="nav-tab" data-tab="admin" id="tab-admin-btn" style="display:none">
-          <span class="tab-icon">⚙️</span>
-          <span class="tab-label">Admin</span>
-        </button>
+        <p class="text-sm text-muted">Ajouter, modifier ou retirer des participants.</p>
       </div>
-    </nav>
 
-    <!-- Bandeau saison archivée — entre nav et contenu -->
-    <div id="saison-indicateur" style="display:none;
-         background:linear-gradient(135deg,#B8860B,#8B6508);
-         padding:7px 16px;align-items:center;
-         justify-content:space-between;gap:8px">
-      <div style="display:flex;align-items:center;gap:8px">
-        <span style="font-size:14px">📁</span>
-        <span class="saison-ind-label"
-          style="font-size:12px;font-weight:600;color:white"></span>
+      <!-- ── Règles soumissions tardives ── -->
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title" style="margin-bottom:8px">⚙️ Règles soumissions tardives</div>
+        <label class="profil-label">Points pour non-soumis</label>
+        <select class="profil-input" id="admin-sans-prono" style="margin-bottom:10px"
+          onchange="sauverRegleSansProno(this.value)">
+          <option value="demi_minimum" ${CONFIG.regles.sansPronostic==='demi_minimum'?'selected':''}>
+            Moitié du minimum (recommandé)
+          </option>
+          <option value="demi_moyenne" ${CONFIG.regles.sansPronostic==='demi_moyenne'?'selected':''}>
+            Moitié de la moyenne
+          </option>
+          <option value="zero" ${CONFIG.regles.sansPronostic==='zero'?'selected':''}>
+            0 point
+          </option>
+        </select>
+        <label class="profil-label">Pénalité retard (pts)</label>
+        <input type="number" class="profil-input" id="admin-penalite"
+          value="${CONFIG.regles.penaliteRetard}" max="0" min="-20"
+          style="margin-bottom:10px"
+          onchange="sauverPenalite(parseInt(this.value))">
+        <label class="profil-label">Délai réouverture (heures)</label>
+        <input type="number" class="profil-input" id="admin-delai-reouverture"
+          value="${CONFIG.regles.delaiReouvretureHeures}" min="1" max="72"
+          onchange="sauverDelaiReouverture(parseInt(this.value))">
+        <p class="text-sm text-muted mt-8">
+          Ces réglages s'appliquent à toutes les journées. Modifiez aussi config.js pour les rendre permanents.
+        </p>
       </div>
-      <button onclick="basculerSaison(saisonKey(CONFIG.saison))"
-        style="background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.4);
-               border-radius:8px;color:white;padding:4px 10px;
-               font-size:11px;font-weight:500;cursor:pointer;white-space:nowrap">
-        ↩ Saison en cours
+
+      <!-- ── Saison ── -->
+      <div class="card">
+        <div class="card-title" style="margin-bottom:8px">🏁 Clôturer une saison</div>
+        <label class="profil-label">Sélectionner la saison à clôturer</label>
+        <select id="admin-select-cloture" class="profil-input" style="margin-bottom:10px">
+          ${(APP.listeSaisons && APP.listeSaisons.length > 0
+            ? APP.listeSaisons
+            : [saisonKey(CONFIG.saison)]
+          ).map(k =>
+            '<option value="' + k + '">' + saisonLabel(k)
+            + (k === saisonKey(CONFIG.saison) ? ' (courante)' : '') + '</option>'
+          ).join('')}
+        </select>
+        <button onclick="confirmerClotureSaisonSelectionnee()"
+          style="width:100%;padding:12px;background:#C00000;color:white;border:none;
+                 border-radius:10px;font-size:14px;font-weight:500;cursor:pointer">
+          🏁 Clôturer la saison sélectionnée
+        </button>
+        <p class="text-sm text-muted" style="margin-top:4px">
+          Archive la saison et calcule le palmarès final. Action irréversible.
+        </p>
+      </div>
+
+    </div>`;
+}
+
+// Met à jour le texte du bouton quand on change la sélection
+function adminMettreAJourBoutonJournee() {
+  const sel = document.getElementById('admin-select-journee');
+  const btn = document.getElementById('btn-gerer-journee');
+  if (sel && btn) {
+    btn.textContent = `✏️ Gérer la Journée ${sel.value}`;
+  }
+}
+
+// Navigue vers la journée sélectionnée dans la Grille
+function adminNaviguerVersJournee() {
+  const sel = document.getElementById('admin-select-journee');
+  if (!sel) return;
+  APP.journeeActive = parseInt(sel.value);
+  const badge = document.getElementById('header-journee-badge');
+  if (badge) badge.textContent = `J.${APP.journeeActive}`;
+  chargerTab('grille');
+}
+
+// Ouvre le gestionnaire pour la journée sélectionnée dans la liste
+function adminOuvrirJourneeSelectionnee() {
+  const sel = document.getElementById('admin-select-journee');
+  const j   = sel ? parseInt(sel.value) : APP.journeeActive;
+  APP.journeeActive = j;
+  ouvrirAdminJournee();
+}
+
+
+// ── Grille ────────────────────────────────────────────────────
+function chargerGrille() {
+  document.getElementById('tab-grille').innerHTML = `
+    <div style="padding:16px">
+      <div class="journee-nav">
+        <button onclick="changerJournee(-1)" ${APP.journeeActive<=1?'disabled':''}>‹</button>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px;position:relative">
+          <div onclick="toggleSelectJournee()" id="journee-display"
+            style="font-size:14px;font-weight:700;color:white;cursor:pointer;
+                   display:flex;align-items:center;gap:6px;padding:4px 8px;
+                   border-radius:8px;background:rgba(255,255,255,0.1)">
+            <span id="journee-display-text">Journée ${APP.journeeActive}</span>
+            <span style="font-size:10px;opacity:0.7">▾</span>
+          </div>
+          <div id="journee-dropdown" style="display:none;position:absolute;top:32px;
+               background:#1F4E79;border-radius:10px;
+               box-shadow:0 4px 20px rgba(0,0,0,0.4);z-index:200;
+               max-height:240px;overflow-y:auto;min-width:140px;
+               border:1px solid rgba(255,255,255,0.15)">
+            ${genOptionsJourneesHTML(APP.journeeActive, CONFIG.nbJournees)}
+          </div>
+          <div class="journee-deadline" id="deadline-label">Chargement...</div>
+        </div>
+        <button onclick="changerJournee(1)" ${APP.journeeActive>=CONFIG.nbJournees?'disabled':''}>›</button>
+      </div>
+      <div class="statut-bar" id="statut-bar"></div>
+      <div id="grille-matchs"><div class="loading"><div class="spinner"></div>Chargement...</div></div>
+      <div id="btn-soumettre-container"></div>
+    </div>`;
+  const unsub = dbSaison('journees', `j${APP.journeeActive}`)
+    .onSnapshot(snap => renderGrille(APP.journeeActive, snap.exists ? snap.data() : {}));
+  APP.ecouteurs.push(unsub);
+}
+
+function genOptionsJournees(active, total) {
+  let opts = '';
+  for (let i = 1; i <= total; i++) {
+    opts += '<option value="' + i + '"' + (i === active ? ' selected' : '') + '>'
+          + 'Journée ' + i + '</option>';
+  }
+  return opts;
+}
+
+function genOptionsJourneesHTML(active, total) {
+  let html = '';
+  for (let i = 1; i <= total; i++) {
+    const bg = (i === active) ? 'rgba(255,255,255,0.18)' : 'transparent';
+    const fw = (i === active) ? '700' : '400';
+    html += '<div onclick="allerJournee(' + i + ')" class="dd-journee-item"'
+          + ' style="padding:8px 16px;cursor:pointer;font-size:13px;'
+          + 'font-weight:' + fw + ';color:white;background:' + bg + ';white-space:nowrap">'
+          + 'Journée ' + i + '</div>';
+  }
+  return html;
+}
+
+
+function toggleSelectJournee() {
+  const dd = document.getElementById('journee-dropdown');
+  if (!dd) return;
+  const isOpen = dd.style.display !== 'none';
+  dd.style.display = isOpen ? 'none' : 'block';
+  // Scroller sur la journée active
+  if (!isOpen) {
+    const items = dd.querySelectorAll('div');
+    if (items[APP.journeeActive - 1]) {
+      items[APP.journeeActive - 1].scrollIntoView({ block: 'center' });
+    }
+  }
+  // Fermer si clic ailleurs
+  if (!isOpen) {
+    setTimeout(() => {
+      document.addEventListener('click', function closeDD(e) {
+        const dd2 = document.getElementById('journee-dropdown');
+        const btn = document.getElementById('journee-display');
+        if (dd2 && btn && !dd2.contains(e.target) && !btn.contains(e.target)) {
+          dd2.style.display = 'none';
+          document.removeEventListener('click', closeDD);
+        }
+      });
+    }, 10);
+  }
+}
+
+function allerJournee(j) {
+  // Fermer le dropdown
+  const dd = document.getElementById('journee-dropdown');
+  if (dd) dd.style.display = 'none';
+  if (j >= 1 && j <= CONFIG.nbJournees && j !== APP.journeeActive) {
+    APP.journeeActive = j;
+    const badge = document.getElementById('header-journee-badge');
+    if (badge) badge.textContent = 'J.' + j;
+    chargerTab('grille');
+  }
+}
+
+function changerJournee(d) {
+  const n = APP.journeeActive + d;
+  if (n >= 1 && n <= CONFIG.nbJournees) { APP.journeeActive = n; chargerTab('grille'); }
+}
+
+
+// ── Points par défaut pour les non-soumis ────────────────────
+// Appelé après clôture d'une journée, pour les joueurs sans soumission
+function calculerPointsDefaut(totauxSoumettants) {
+  const regle = CONFIG.regles.sansPronostic || 'demi_minimum';
+  const pts   = Object.values(totauxSoumettants).filter(p => p > 0);
+  if (pts.length === 0) return 0;
+  switch (regle) {
+    case 'zero':
+      return 0;
+    case 'demi_moyenne':
+      return Math.round((pts.reduce((a,b) => a+b, 0) / pts.length) / 2);
+    case 'demi_minimum':
+    default:
+      return Math.round(Math.min(...pts) / 2);
+  }
+}
+
+// ── Vérifier si un match est déjà joué (basé sur timestamp) ──
+function matchDejaJoue(match) {
+  if (!match.timestamp) return false;
+  return Date.now() > match.timestamp;
+}
+
+// ── Vérifier si une réouverture est encore possible ──────────
+function peutReouvrir(deadline) {
+  if (!deadline) return false;
+  const delaiMs = (CONFIG.regles.delaiReouvretureHeures || 24) * 3600000;
+  return Date.now() < deadline + delaiMs;
+}
+
+// ── Vérifier si une soumission est tardive ───────────────────
+function estSoumissionTardive(deadline) {
+  if (!deadline) return false;
+  return Date.now() > deadline;
+}
+
+function renderGrille(j, data) {
+  const matchs = data.matchs || genererMatchsVides();
+
+  // Reconstruire soumissions : supporte les deux formats
+  // Format correct (imbriqué) : { soumissions: { etienne: {...} } }
+  // Format legacy (plat) : { 'soumissions.etienne': {...} }
+  let soumissions = data.soumissions || {};
+  if (Object.keys(soumissions).length === 0) {
+    // Chercher les champs plats "soumissions.xxx"
+    Object.keys(data).forEach(key => {
+      if (key.startsWith('soumissions.')) {
+        const joueurId = key.replace('soumissions.', '');
+        soumissions[joueurId] = data[key];
+      }
+    });
+  }
+  const deadline = data.deadline || null;
+  const now = Date.now();
+  let saisieOuverte = true, deadlineLabel = 'Saisie ouverte';
+  if (deadline) {
+    const diff = deadline - now;
+    if (diff <= 0) { saisieOuverte = false; deadlineLabel = '⛔ Saisie fermée'; }
+    else if (diff < 3600000) deadlineLabel = `⏰ Fermeture dans ${Math.floor(diff/60000)} min`;
+    else deadlineLabel = `⏰ Fermeture dans ${Math.floor(diff/3600000)}h`;
+  }
+  const dl = document.getElementById('deadline-label');
+  if (dl) dl.textContent = deadlineLabel;
+
+  const sb = document.getElementById('statut-bar');
+  if (sb) sb.innerHTML = APP.joueurs.map(jo => {
+    const soumis   = !!soumissions[jo.id];
+    const statut2  = data.statuts?.[jo.id];
+    const tardif2  = statut2?.tardif === true;
+    const joker2   = statut2?.joker  === true;
+    const cls      = soumis ? (tardif2 ? 'en-cours' : 'soumis') : '';
+    const label    = soumis
+      ? (joker2 ? ' 🃏' : '') + (tardif2 ? ' ⚠️' : ' ✓')
+      : '';
+    return '<div class="statut-joueur ' + cls + '"><div class="statut-dot"></div>'
+      + jo.emoji + ' ' + jo.nom.split(' ')[0] + label + '</div>';
+  }).join('');
+
+  const monId = APP.joueurActif?.id;
+  const jaiSoumis  = monId ? !!soumissions[monId] : false;
+  const peutVoir   = APP.estAdmin || jaiSoumis;
+  // Lecture seule si saison CLÔTURÉE (pas juste si différente de la courante)
+  // Une saison non courante mais non clôturée reste modifiable
+  const saisonRO = APP.saisonEstCloturee === true;
+
+  // ── Réouverture tardive pour non-soumis ─────────────────
+  const tardif       = deadline ? estSoumissionTardive(deadline) : false;
+  const peutRouvrir  = deadline ? peutReouvrir(deadline) : true;
+  const modeRetard   = tardif && peutRouvrir && !jaiSoumis && !!monId;
+
+  const mc = document.getElementById('grille-matchs');
+  if (!mc) return;
+  mc.innerHTML = matchs.map((match, idx) => {
+    const sr = match.scoreReel || null;
+    const pts = (prono, reel) => reel ? calculerPoints(prono, reel) : null;
+    // En mode retard : saisie autorisée uniquement sur matchs futurs
+  const locked = jaiSoumis || (!saisieOuverte && !modeRetard) || saisonRO;
+    const monProno = soumissions[monId]?.[idx] || { dom:'', ext:'' };
+    const mesPoints = monId && sr ? calculerPoints(monProno, sr) : null;
+
+    // En mode retard : match passé = forcément verrouillé (0 pt)
+    const matchPasse   = modeRetard && matchDejaJoue(match);
+    const lockedMatch  = locked || matchPasse;
+    const inputs = monId ? '<div class="score-inputs">'
+      + '<input type="number" min="0" max="20" class="score-input ' + (lockedMatch?'locked':'') + '"'
+      + ' id="sc-' + idx + '-dom" value="' + (monProno.dom!==''?monProno.dom:'') + '"'
+      + (lockedMatch?' readonly':'') + ' onchange="sauverPronoTemp(' + idx + ')" placeholder="—">'
+      + '<span class="score-separator">-</span>'
+      + '<input type="number" min="0" max="20" class="score-input ' + (lockedMatch?'locked':'') + '"'
+      + ' id="sc-' + idx + '-ext" value="' + (monProno.ext!==''?monProno.ext:'') + '"'
+      + (lockedMatch?' readonly':'') + ' onchange="sauverPronoTemp(' + idx + ')" placeholder="—">'
+      + (matchPasse ? '<span style="font-size:10px;color:var(--gris);margin-left:4px">0pt</span>' : '')
+      + (mesPoints!==null ? '<div class="points-badge points-' + mesPoints + '">' + mesPoints + '</div>' : '')
+      + '</div>' : '';
+
+    const autres = peutVoir && APP.joueurs.length > 1 ? `
+      <div class="mt-8" style="display:flex;flex-wrap:wrap;gap:4px">
+        ${APP.joueurs.filter(jo=>jo.id!==monId).map(jo=>{
+          const p = soumissions[jo.id]?.[idx];
+          const pj = p && sr ? calculerPoints(p, sr) : null;
+          if (!soumissions[jo.id]) return `<span class="badge" style="opacity:0.3">${jo.emoji}</span>`;
+          if (!p) return `<span class="badge badge-bleu">${jo.emoji} —</span>`;
+          const cls = pj===7?'badge-or':pj===5?'badge-vert':pj===3?'badge-bleu':'';
+          return `<span class="badge ${cls}">${jo.emoji} ${p.dom}-${p.ext}${pj!==null?` (${pj})`:''}</span>`;
+        }).join('')}
+      </div>` : '';
+
+    return `<div class="match-row">
+      <div class="match-date">${match.date||`Match ${idx+1}`}</div>
+      <div class="match-teams">
+        <span class="team-name">${match.domicile||`Éq.${idx+1}D`}</span>
+        ${sr?`<div class="score-reel"><strong>${sr.dom}</strong><span class="sep"> - </span><strong>${sr.ext}</strong></div>`:'<span class="vs-badge">VS</span>'}
+        <span class="team-name ext">${match.exterieur||`Éq.${idx+1}E`}</span>
+      </div>${inputs}${autres}</div>`;
+  }).join('');
+
+  const bc = document.getElementById('btn-soumettre-container');
+  if (!bc) return;
+  if (APP.estAdmin) {
+    bc.innerHTML = '<button class="btn-primary mt-8" onclick="ouvrirAdminJournee()">⚙️ Admin — Gérer cette journée</button>';
+  } else if (!monId) {
+    bc.innerHTML = '';
+  } else if (jaiSoumis) {
+    // Vérifier si c'était une soumission tardive
+    const statut = data.statuts?.[monId];
+    const etaitTardif = statut?.tardif === true;
+    bc.innerHTML = etaitTardif
+      ? '<button class="btn-soumettre locked" disabled style="background:var(--or)">'
+        + '⚠️ Pronostics soumis en retard (pénalité ' + CONFIG.regles.penaliteRetard + 'pts)</button>'
+      : '<button class="btn-soumettre locked" disabled>✅ Pronostics soumis et verrouillés</button>';
+  } else if (modeRetard) {
+    // Réouverture possible : saisie tardive avec avertissement
+    bc.innerHTML = '<div style="background:var(--or-l);border:1px solid var(--or);border-radius:10px;'
+      + 'padding:12px;margin-top:8px">'
+      + '<p style="font-size:13px;font-weight:600;color:var(--or);margin-bottom:6px">⚠️ Saisie tardive</p>'
+      + '<p class="text-sm" style="margin-bottom:8px;color:var(--gris)">'
+      + 'Les matchs déjà joués rapportent <strong>0 point</strong>.<br>'
+      + 'Pénalité : <strong>' + CONFIG.regles.penaliteRetard + ' pts</strong> sur votre total.'
+      + '</p>'
+      + '<button class="btn-soumettre" onclick="soumettreTardif(' + j + ')"'
+      + ' style="background:var(--or)">⚠️ Soumettre en retard (pénalité ' + CONFIG.regles.penaliteRetard + 'pts)</button>'
+      + '</div>';
+  } else if (!saisieOuverte && !peutRouvrir) {
+    bc.innerHTML = '<button class="btn-soumettre" disabled>⛔ Délai dépassé — saisie impossible</button>';
+  } else if (!saisieOuverte) {
+    bc.innerHTML = '<button class="btn-soumettre" disabled>⛔ Saisie fermée</button>';
+  } else {
+    // Vérifier le joker du joueur
+    const monJoker   = APP.joueurActif?.joker;
+    const jokerDispo = !monJoker && !!monId;
+    const jokerSurJ  = monJoker?.journee === j;
+
+    let jokerHtml = '';
+    if (jokerDispo) {
+      jokerHtml = '<button onclick="poserJoker(' + j + ')"'
+        + ' style="width:100%;padding:9px;background:transparent;color:var(--or);'
+        + 'border:1.5px solid var(--or);border-radius:10px;font-size:13px;'
+        + 'font-weight:500;cursor:pointer;margin-top:8px">'
+        + '🃏 Activer mon joker sur cette journée (×2 pts)</button>';
+    } else if (jokerSurJ) {
+      jokerHtml = '<div style="background:var(--or-l);border:1.5px solid var(--or);'
+        + 'border-radius:10px;padding:8px 12px;margin-top:8px;'
+        + 'display:flex;align-items:center;justify-content:space-between;gap:8px">'
+        + '<span style="font-size:13px;font-weight:600;color:var(--or)">🃏 Joker activé — points ×2</span>'
+        + '<button onclick="annulerJoker()" style="font-size:11px;color:var(--gris);'
+        + 'background:none;border:none;cursor:pointer;text-decoration:underline">Annuler</button>'
+        + '</div>';
+    } else if (monJoker) {
+      jokerHtml = '<p class="text-sm text-muted text-center" style="margin-top:8px">'
+        + '🃏 Joker déjà utilisé (J' + monJoker.journee + ')</p>';
+    }
+
+    bc.innerHTML = '<button class="btn-soumettre" onclick="soumettre(' + j + ')">✅ Soumettre mes pronostics</button>'
+      + jokerHtml
+      + '<p class="text-sm text-center mt-8">Une fois soumis, vous verrez les pronostics des autres joueurs ayant déjà joué.</p>';
+  }
+}
+
+const pronoTemp = {};
+function sauverPronoTemp(idx) {
+  const d = document.getElementById(`sc-${idx}-dom`)?.value;
+  const e = document.getElementById(`sc-${idx}-ext`)?.value;
+  pronoTemp[idx] = { dom: d!==''?parseInt(d):'', ext: e!==''?parseInt(e):'' };
+}
+
+async function soumettre(j) {
+  if (!APP.joueurActif) return;
+  const pronostics = {};
+  let complets = 0;
+  for (let i = 0; i < CONFIG.nbMatchsParJournee; i++) {
+    const d = document.getElementById(`sc-${i}-dom`)?.value;
+    const e = document.getElementById(`sc-${i}-ext`)?.value;
+    pronostics[i] = { dom: d!==''?parseInt(d):'', ext: e!==''?parseInt(e):'' };
+    if (d!=='' && e!=='') complets++;
+  }
+  if (complets < CONFIG.nbMatchsParJournee && !confirm(`${CONFIG.nbMatchsParJournee-complets} match(s) sans pronostic. Soumettre quand même ?`)) return;
+  if (!confirm(`Confirmer pour la Journée ${j} ?\n⚠️ Non modifiable ensuite.`)) return;
+  try {
+    // Lire d'abord le doc pour merger manuellement les soumissions
+    const ref  = dbSaison('journees', `j${j}`);
+    const snap = await ref.get();
+    const existing = snap.exists ? snap.data() : {};
+    const soumissions = existing.soumissions || {};
+    const statuts     = existing.statuts     || {};
+    soumissions[APP.joueurActif.id] = pronostics;
+    const aJoker = APP.joueurActif.joker?.journee === j;
+    statuts[APP.joueurActif.id]     = { soumisAt: Date.now(), complets, joker: aJoker };
+    await ref.set({ ...existing, soumissions, statuts }, { merge: true });
+    showToast(`✅ ${APP.joueurActif.nom} — pronostics soumis !`, 'success');
+  } catch(e) { console.error(e); showToast('Erreur soumission. Réessayez.', 'error'); }
+}
+
+// ── Soumission tardive ────────────────────────────────────────
+async function soumettreTardif(j) {
+  if (!APP.joueurActif) return;
+
+  const ref      = dbSaison('journees', `j${j}`);
+  const snap     = await ref.get();
+  const data     = snap.exists ? snap.data() : {};
+  const matchs   = data.matchs || [];
+  const deadline = data.deadline || null;
+  const now      = Date.now();
+
+  const pronostics = {};
+  let complets = 0;
+
+  for (let i = 0; i < CONFIG.nbMatchsParJournee; i++) {
+    const match = matchs[i] || {};
+    const dejaJoue = match.timestamp && now > match.timestamp;
+
+    if (dejaJoue) {
+      // Match passé : pronostic vide (0 pt automatiquement)
+      pronostics[i] = { dom: '', ext: '', passé: true };
+    } else {
+      const d = document.getElementById(`sc-${i}-dom`)?.value;
+      const e = document.getElementById(`sc-${i}-ext`)?.value;
+      pronostics[i] = { dom: d!==''?parseInt(d):'', ext: e!==''?parseInt(e):'' };
+      if (d!=='' && e!=='') complets++;
+    }
+  }
+
+  const nbFuturs = matchs.filter(m => m.timestamp && now <= m.timestamp).length;
+  if (nbFuturs > 0 && complets < nbFuturs) {
+    if (!confirm(`${nbFuturs - complets} match(s) futur(s) sans pronostic. Soumettre quand même ?`)) return;
+  }
+
+  if (!confirm(`Confirmer la soumission tardive pour J${j} ?
+`
+    + `• Matchs passés : 0 pt automatiquement
+`
+    + `• Pénalité : ${CONFIG.regles.penaliteRetard} pts sur votre total de journée`)) return;
+
+  try {
+    const existing = snap.exists ? snap.data() : {};
+    const soumissions = existing.soumissions || {};
+    const statuts     = existing.statuts     || {};
+
+    soumissions[APP.joueurActif.id] = pronostics;
+    const aJokerT = APP.joueurActif.joker?.journee === j;
+    statuts[APP.joueurActif.id]     = {
+      soumisAt:  now,
+      complets,
+      tardif:    true,
+      penalite:  CONFIG.regles.penaliteRetard,
+      joker:     aJokerT,
+    };
+
+    await ref.set({ ...existing, soumissions, statuts }, { merge: true });
+    showToast(`⚠️ Soumission tardive enregistrée (${CONFIG.regles.penaliteRetard} pts)`, 'warning');
+  } catch(e) {
+    console.error(e);
+    showToast('Erreur soumission tardive', 'error');
+  }
+}
+
+
+function calculerPoints(prono, reel) {
+  // Match passé en soumission tardive → 0 pt
+  if (prono && prono.passé === true) return 0;
+  const pd=parseInt(prono.dom), pe=parseInt(prono.ext), rd=parseInt(reel.dom), re=parseInt(reel.ext);
+  if ([pd,pe,rd,re].some(isNaN)) return null;
+  if (pd===rd && pe===re) return (rd+re>=4) ? CONFIG.bareme.exact4b : CONFIG.bareme.exact;
+  return Math.sign(pd-pe)===Math.sign(rd-re) ? CONFIG.bareme.bonSens : CONFIG.bareme.mauvais;
+}
+
+// ── Points d'une journée avec pénalité tardive ───────────────
+function calculerPointsJournee(soumissions, matchs, joueurId) {
+  const prono  = soumissions[joueurId];
+  if (!prono) return null; // pas soumis
+  const statut = null; // statuts gérés au niveau du doc
+  let total = matchs.reduce((acc, match, idx) => {
+    const p = prono[idx];
+    if (!p || !match.scoreReel) return acc;
+    return acc + (calculerPoints(p, match.scoreReel) || 0);
+  }, 0);
+  return total;
+}
+
+// ── Résultats ─────────────────────────────────────────────────
+function chargerResultats() {
+  document.getElementById('tab-resultats').innerHTML = '<div style="padding:16px">'
+    + '<button onclick="rafraichirScoresESPN(' + APP.journeeActive + ')"'
+    + ' id="btn-refresh-scores"'
+    + ' style="width:100%;padding:11px 16px;background:var(--or);color:white;border:none;'
+    + 'border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:12px;'
+    + 'display:flex;align-items:center;justify-content:center;gap:8px;'
+    + 'box-shadow:0 2px 8px rgba(232,80,10,0.25);transition:opacity .15s">'
+    + '⚽ Rafraîchir les scores</button>'
+    + '<div class="journee-nav">'
+    + '<button onclick="changerJourneeR(-1)" ' + (APP.journeeActive<=1?'disabled':'') + '>‹</button>'
+    + '<div style="display:flex;flex-direction:column;align-items:center;gap:4px;position:relative">'
+    + '<div onclick="toggleSelectResultats()" id="resultats-display"'
+    + ' style="font-size:14px;font-weight:700;color:white;cursor:pointer;'
+    + 'display:flex;align-items:center;gap:6px;padding:4px 8px;'
+    + 'border-radius:8px;background:rgba(255,255,255,0.1)">'
+    + '<span id="resultats-display-text">Journée ' + APP.journeeActive + '</span>'
+    + '<span style="font-size:10px;opacity:0.7">▾</span></div>'
+    + '<div id="resultats-dropdown" style="display:none;position:absolute;top:32px;'
+    + 'background:#1F4E79;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,0.4);z-index:200;'
+    + 'max-height:240px;overflow-y:auto;min-width:140px;border:1px solid rgba(255,255,255,0.15)">'
+    + genOptionsResultatsHTML(APP.journeeActive, CONFIG.nbJournees)
+    + '</div></div>'
+    + '<button onclick="changerJourneeR(1)" ' + (APP.journeeActive>=CONFIG.nbJournees?'disabled':'') + '>›</button>'
+    + '</div>'
+    + '<div id="resultats-content"><div class="loading"><div class="spinner"></div></div></div>'
+    + '</div>';
+  const unsub = dbSaison('journees', `j${APP.journeeActive}`)
+    .onSnapshot(snap => renderResultats(APP.journeeActive, snap.exists ? snap.data() : {}));
+  APP.ecouteurs.push(unsub);
+}
+
+function genOptionsResultatsHTML(active, total) {
+  let html = '';
+  for (let i = 1; i <= total; i++) {
+    const bg = (i === active) ? 'rgba(255,255,255,0.18)' : 'transparent';
+    const fw = (i === active) ? '700' : '400';
+    html += '<div onclick="allerJourneeResultats(' + i + ')" class="dd-journee-item"'
+          + ' style="padding:8px 16px;cursor:pointer;font-size:13px;'
+          + 'font-weight:' + fw + ';color:white;background:' + bg + ';white-space:nowrap">'
+          + 'Journée ' + i + '</div>';
+  }
+  return html;
+}
+
+function toggleSelectResultats() {
+  const dd = document.getElementById('resultats-dropdown');
+  if (!dd) return;
+  const isOpen = dd.style.display !== 'none';
+  dd.style.display = isOpen ? 'none' : 'block';
+  if (!isOpen) {
+    const items = dd.querySelectorAll('.dd-journee-item');
+    if (items[APP.journeeActive - 1]) items[APP.journeeActive - 1].scrollIntoView({ block: 'center' });
+    setTimeout(() => {
+      document.addEventListener('click', function closeR(e) {
+        const dd2 = document.getElementById('resultats-dropdown');
+        const btn = document.getElementById('resultats-display');
+        if (dd2 && btn && !dd2.contains(e.target) && !btn.contains(e.target)) {
+          dd2.style.display = 'none';
+          document.removeEventListener('click', closeR);
+        }
+      });
+    }, 10);
+  }
+}
+
+function allerJourneeResultats(j) {
+  const dd = document.getElementById('resultats-dropdown');
+  if (dd) dd.style.display = 'none';
+  if (j === APP.journeeActive) return;
+  APP.journeeActive = j;
+  const badge = document.getElementById('header-journee-badge');
+  if (badge) badge.textContent = 'J.' + j;
+  chargerTab('resultats');
+}
+
+function changerJourneeR(d) {
+  const n = APP.journeeActive + d;
+  if (n>=1 && n<=CONFIG.nbJournees) {
+    APP.journeeActive = n;
+    const badge = document.getElementById('header-journee-badge');
+    if (badge) badge.textContent = 'J.' + n;
+    chargerTab('resultats');
+  }
+}
+
+function renderResultats(j, data) {
+  const matchs = data.matchs || genererMatchsVides();
+
+  // Reconstruire soumissions (support format plat legacy)
+  let soumissions = data.soumissions || {};
+  if (Object.keys(soumissions).length === 0) {
+    Object.keys(data).forEach(key => {
+      if (key.startsWith('soumissions.')) {
+        soumissions[key.replace('soumissions.', '')] = data[key];
+      }
+    });
+  }
+  const deadline    = data.deadline    || null;
+
+  // Une journée est "fermée" si sa deadline est passée OU si tous ses scores sont entrés
+  const now           = Date.now();
+  const deadlinePassee = deadline && deadline < now;
+  const tousScores     = matchs.length > 0 && matchs.every(m => m.scoreReel !== null);
+  const journeeFermee  = deadlinePassee || tousScores;
+
+  // En saison archivée : jamais de points ni gains
+  const afficherPtsGains = estSaisonCourante() && journeeFermee;
+
+  // Admin peut saisir les scores seulement si journée PAS encore fermée
+  // (ou si saison courante et scores manquants)
+  const adminPeutSaisir = APP.estAdmin && estSaisonCourante();
+
+  const el = document.getElementById('num-j-r');
+  if (el) el.textContent = j;
+
+  const totaux = Object.fromEntries(APP.joueurs.map(jo => [jo.id, 0]));
+
+  let html = `<div class="resultats-table"><table><thead><tr>
+    <th class="match-col">Match</th>
+    <th>Score</th>
+    ${APP.joueurs.map(jo => `<th title="${jo.nom}">${jo.emoji}</th>`).join('')}
+  </tr></thead><tbody>`;
+
+  matchs.forEach((match, idx) => {
+    const sr = match.scoreReel || null;
+    const bgRow = idx % 2 === 0 ? '' : 'style="background:var(--color-background-secondary)"';
+
+    // Cellule score
+    let scoreHtml;
+    if (sr) {
+      if (adminPeutSaisir) {
+        // Admin + saison courante : inputs éditables
+        scoreHtml = `
+          <input type="number"
+            style="width:26px;border:1px solid var(--vert);border-radius:4px;
+                   text-align:center;font-size:12px;font-weight:700;color:var(--vert)"
+            value="${sr.dom}" onchange="saisirScore(${j},${idx},'dom',this.value)" min="0" max="20">
+          <span style="font-weight:700;color:var(--gris)">-</span>
+          <input type="number"
+            style="width:26px;border:1px solid var(--vert);border-radius:4px;
+                   text-align:center;font-size:12px;font-weight:700;color:var(--vert)"
+            value="${sr.ext}" onchange="saisirScore(${j},${idx},'ext',this.value)" min="0" max="20">`;
+      } else {
+        // Journée fermée OU saison archivée : score grisé, non éditable
+        scoreHtml = `
+          <span style="font-size:13px;font-weight:700;
+                       color:${journeeFermee ? 'var(--gris)' : 'var(--vert)'};
+                       background:${journeeFermee ? 'var(--gris-l)' : 'var(--vert-l)'};
+                       padding:2px 7px;border-radius:6px">
+            ${sr.dom} - ${sr.ext}
+          </span>`;
+      }
+    } else if (adminPeutSaisir) {
+      // Pas encore de score + admin saison courante : inputs vides
+      scoreHtml = `
+        <input type="number"
+          style="width:26px;border:1px solid #ddd;border-radius:4px;
+                 text-align:center;font-size:12px"
+          value="" onchange="saisirScore(${j},${idx},'dom',this.value)" min="0" max="20" placeholder="—">
+        <span style="color:var(--gris)">-</span>
+        <input type="number"
+          style="width:26px;border:1px solid #ddd;border-radius:4px;
+                 text-align:center;font-size:12px"
+          value="" onchange="saisirScore(${j},${idx},'ext',this.value)" min="0" max="20" placeholder="—">`;
+    } else {
+      scoreHtml = '<span style="color:var(--gris-l);font-size:13px">—</span>';
+    }
+
+    html += `<tr ${bgRow}>
+      <td class="match-col" style="font-size:11px">
+        ${match.domicile||'?'} - ${match.exterieur||'?'}
+      </td>
+      <td class="score-cell" style="white-space:nowrap">${scoreHtml}</td>`;
+
+    // Colonnes pronostics par joueur
+    APP.joueurs.forEach(jo => {
+      const p   = soumissions[jo.id]?.[idx];
+      // Toujours calculer les points si scores disponibles
+      const pts = (p && sr) ? calculerPoints(p, sr) : null;
+      if (pts !== null) totaux[jo.id] += pts;
+
+      const vis = APP.estAdmin
+        || APP.joueurActif?.id === jo.id
+        || (APP.joueurActif && soumissions[APP.joueurActif.id] && soumissions[jo.id]);
+
+      if (!vis) {
+        html += `<td class="hidden-cell">?</td>`;
+      } else if (!p) {
+        html += `<td style="color:var(--gris-l)">—</td>`;
+      } else if (!sr) {
+        // Score pas encore entré : afficher le prono sans couleur
+        html += `<td class="prono-cell" style="color:var(--gris)">${p.dom}-${p.ext}</td>`;
+      } else if (pts !== null) {
+        // Scores disponibles : toujours afficher avec couleur et points
+        const cls = pts === 7 ? 'pts-7' : pts === 5 ? 'pts-5' : pts === 3 ? 'pts-3' : 'pts-0';
+        const tardifCell = (data.statuts?.[jo.id]?.tardif) ? ' ⚠️' : '';
+        const pronoStr = p.passé ? '— (passé)' : p.dom + '-' + p.ext;
+        html += '<td class="prono-cell ' + cls + '">'
+          + pronoStr + tardifCell + '<br><small>' + pts + 'pt</small></td>';
+      } else {
+        // Pas encore de score : prono visible, grisé
+        html += `<td class="prono-cell" style="color:var(--gris)">${p.dom}-${p.ext}</td>`;
+      }
+    });
+
+    html += '</tr>';
+  });
+
+  // Ligne totaux (seulement si points affichés)
+  if (afficherPtsGains) {
+    html += `<tr style="background:var(--color-background-secondary);font-weight:500">
+      <td colspan="2" style="text-align:right;padding-right:8px;font-size:12px">Total</td>
+      ${APP.joueurs.map(jo =>
+        `<td style="font-size:13px;color:var(--orange);font-weight:700">${totaux[jo.id] || '—'}</td>`
+      ).join('')}
+    </tr>`;
+  }
+
+  html += '</tbody></table></div>';
+
+  // Appliquer pénalités tardives
+  APP.joueurs.forEach(jo => {
+    const statut = data.statuts?.[jo.id];
+    if (statut?.tardif && statut?.penalite) {
+      totaux[jo.id] = Math.max(0, totaux[jo.id] + statut.penalite);
+    }
+  });
+
+  // Appliquer le joker (×2)
+  APP.joueurs.forEach(jo => {
+    const statut = data.statuts?.[jo.id];
+    if (statut?.joker === true) {
+      totaux[jo.id] = totaux[jo.id] * 2;
+    }
+  });
+
+  // Appliquer points par défaut aux non-soumis (si tous les scores sont entrés)
+  const tousScores2 = matchs.length > 0 && matchs.every(m => m.scoreReel !== null);
+  if (tousScores2) {
+    const totauxSoumettants = Object.fromEntries(
+      APP.joueurs.filter(jo => soumissions[jo.id]).map(jo => [jo.id, totaux[jo.id]])
+    );
+    const ptsDefaut = calculerPointsDefaut(totauxSoumettants);
+    APP.joueurs.forEach(jo => {
+      if (!soumissions[jo.id]) {
+        totaux[jo.id] = ptsDefaut;
+      }
+    });
+  }
+
+  // Classement journée — tous les joueurs, même sans pronostic
+  // Les non-soumis ont déjà leurs points par défaut dans totaux (calculés ci-dessus)
+  // Si les scores ne sont pas encore tous là, on affiche quand même avec les pts actuels
+
+  const tousJoueursTriees = APP.joueurs.slice()
+    .sort((a, b) => (totaux[b.id] || 0) - (totaux[a.id] || 0));
+
+  // Toujours afficher le classement (même journée vide = tous à 0)
+  {
+    const monId2 = APP.joueurActif?.id;
+    const medals = { 1:'🥇', 2:'🥈', 3:'🥉' };
+    let ptsPrecedents = -1, rangCourant = 1;
+
+    // Indicateur si points par défaut appliqués
+    const avecPtsDefaut = tousScores2 && APP.joueurs.some(jo => !soumissions[jo.id]);
+    const ptsDefautVal  = avecPtsDefaut
+      ? calculerPointsDefaut(Object.fromEntries(
+          APP.joueurs.filter(jo => soumissions[jo.id]).map(jo => [jo.id, totaux[jo.id]])
+        ))
+      : 0;
+
+    html += '<div class="card mt-12">';
+    html += '<div class="card-title">📊 Classement Journée ' + j + '</div>';
+
+    if (avecPtsDefaut && ptsDefautVal > 0) {
+      html += '<p class="text-sm text-muted" style="margin-bottom:8px">'
+        + '⚙️ Non-soumis : ' + ptsDefautVal + ' pts par défaut (moitié du minimum)</p>';
+    }
+    if (!tousScores2 && tousJoueursTriees.some(jo => soumissions[jo.id])) {
+      html += '<p class="text-sm text-muted" style="margin-bottom:8px">'
+        + '⏳ Scores incomplets — classement provisoire</p>';
+    }
+
+    tousJoueursTriees.forEach((jo, i) => {
+      const pts       = totaux[jo.id] || 0;
+      const aSoumis   = !!soumissions[jo.id];
+      const statJo    = data.statuts?.[jo.id];
+      const estTardif = statJo?.tardif === true;
+      const estJoker  = statJo?.joker  === true;
+      const rang      = (pts !== ptsPrecedents) ? i + 1 : rangCourant;
+      rangCourant = rang; ptsPrecedents = pts;
+
+      const gain = afficherPtsGains
+        ? ([CONFIG.gains.premier, CONFIG.gains.deuxieme, CONFIG.gains.troisieme][rang - 1] || 0)
+        : 0;
+      const isMe = jo.id === monId2;
+
+      // Badge rang
+      const rangClass = (aSoumis && rang <= 3) ? 'rang-' + rang : 'rang-other';
+      const rangLabel = (aSoumis && medals[rang]) ? medals[rang] : rang;
+
+      // Sous-label pour non-soumis ou tardif
+      const subLabel = !aSoumis
+        ? (tousScores2 ? '<br><small style="color:var(--gris)">par défaut</small>' : '')
+        : ((estTardif ? '<br><small style="color:var(--or)">⚠️ tardif</small>' : '')
+          + (estJoker  ? '<br><small style="color:var(--or)">🃏 joker ×2</small>' : ''));
+
+      html += '<div class="classement-row' + (isMe ? ' moi' : '') + '"'
+        + (!aSoumis && !tousScores2 ? ' style="opacity:0.45"' : '') + '>'
+        + '<div class="rang-badge ' + rangClass + '">' + rangLabel + '</div>'
+        + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + '</div>'
+        + '<div class="classement-pts">' + pts + subLabel + '<span>pts</span></div>'
+        + (afficherPtsGains && gain > 0 ? '<div class="classement-gains">+' + gain + '€</div>' : '<div></div>')
+        + '</div>';
+    });
+
+    html += '</div>';
+  }
+
+  const rc = document.getElementById('resultats-content');
+  if (rc) rc.innerHTML = html;
+}
+
+async function saisirScore(j,idx,cote,val) {
+  if(!APP.estAdmin) return;
+  try {
+    const ref=dbSaison('journees', `j${j}`);
+    const snap=await ref.get();
+    const matchs=snap.exists?(snap.data().matchs||genererMatchsVides()):genererMatchsVides();
+    if(!matchs[idx].scoreReel) matchs[idx].scoreReel={};
+    matchs[idx].scoreReel[cote]=val!==''?parseInt(val):'';
+    await ref.set({matchs},{merge:true});
+  } catch(e) { showToast('Erreur sauvegarde score','error'); }
+}
+
+// ── Classement ────────────────────────────────────────────────
+function chargerClassement() {
+  const container = document.getElementById('tab-classement');
+  const saison = saisonLabel(APP.saisonAffichee || saisonKey(CONFIG.saison));
+  const avecBonus = APP.journeeActive >= CONFIG.regles.bonusSaisonDepuisJournee;
+
+  container.innerHTML = '<div style="padding:16px">'
+    + (avecBonus
+      ? '<label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;'
+        + 'padding:10px 14px;background:var(--or-l);border:1px solid var(--or);'
+        + 'border-radius:10px;margin-bottom:14px">'
+        + '<input type="checkbox" id="cl-avec-bonus" onchange="chargerClassementSaison()"'
+        + ' style="width:16px;height:16px;cursor:pointer">'
+        + '<div><div style="font-weight:600;color:var(--or)">Inclure les bonus fin de saison</div>'
+        + '<div class="text-sm" style="color:var(--gris)">Charge le classement réel + meilleur buteur depuis ESPN</div>'
+        + '</div></label>'
+      : '')
+    + '<div id="classement-content"><div class="loading"><div class="spinner"></div>Calcul...</div></div>'
+    + '</div>';
+
+  chargerClassementSaison();
+}
+
+
+function genOptionsClassementHTML(active, total) {
+  const isSaison = active === 'saison';
+  const items = [{ val: 'saison', label: '🏆 Saison complète' }];
+  for (let i = 1; i <= total; i++) items.push({ val: i, label: 'Journée ' + i });
+
+  return items.map(item => {
+    const isActive = item.val === active;
+    const bg = isActive ? 'rgba(255,255,255,0.18)' : 'transparent';
+    const fw = isActive ? '700' : '400';
+    const valStr = typeof item.val === 'string' ? JSON.stringify(item.val) : item.val;
+    return '<div onclick="selectionnerClassement(' + valStr + ')" class="dd-journee-item"'
+         + ' style="padding:8px 16px;cursor:pointer;font-size:13px;'
+         + 'font-weight:' + fw + ';color:white;background:' + bg + ';white-space:nowrap">'
+         + item.label + '</div>';
+  }).join('');
+}
+
+
+function toggleSelectClassement() {
+  const dd = document.getElementById('classement-dropdown');
+  if (!dd) return;
+  const isOpen = dd.style.display !== 'none';
+  dd.style.display = isOpen ? 'none' : 'block';
+  if (!isOpen) {
+    // Scroller sur la sélection active
+    const items = dd.querySelectorAll('.dd-journee-item');
+    const idx = APP._classementSelection === 'saison' ? 0 : APP._classementSelection;
+    if (items[idx]) items[idx].scrollIntoView({ block: 'center' });
+    setTimeout(() => {
+      document.addEventListener('click', function closeCL(e) {
+        const dd2 = document.getElementById('classement-dropdown');
+        const btn = document.getElementById('classement-display');
+        if (dd2 && btn && !dd2.contains(e.target) && !btn.contains(e.target)) {
+          dd2.style.display = 'none';
+          document.removeEventListener('click', closeCL);
+        }
+      });
+    }, 10);
+  }
+}
+
+function selectionnerClassement(val) {
+  const dd = document.getElementById('classement-dropdown');
+  if (dd) dd.style.display = 'none';
+  // Normaliser : 0 et 'saison' sont équivalents
+  const normalized = (val === 'saison' || val === 0 || val === '0') ? 'saison' : parseInt(val);
+  APP._classementSelection = normalized;
+  updateNavClassement();
+  if (dd) dd.innerHTML = genOptionsClassementHTML(normalized, CONFIG.nbJournees);
+  if (normalized === 'saison') {
+    const el = document.getElementById('classement-display-text');
+    if (el) el.textContent = '🏆 Saison complète';
+    chargerClassementSaison();
+  } else {
+    const el = document.getElementById('classement-display-text');
+    if (el) el.textContent = 'Journée ' + normalized;
+    chargerClassementJournee(normalized);
+  }
+}
+
+function changerTypeClassement(delta) {
+  const cur = APP._classementSelection;
+  let next;
+  // Toujours travailler avec des entiers pour les journées
+  const curNum = (cur === 'saison') ? 0 : parseInt(cur);
+  if (delta === -1) {
+    next = curNum <= 1 ? 'saison' : curNum - 1;
+  } else {
+    next = curNum === 0 ? 1 : Math.min(curNum + 1, CONFIG.nbJournees);
+  }
+  selectionnerClassement(next);
+}
+
+function updateNavClassement() {
+  const cur = APP._classementSelection;
+  const curNum = (cur === 'saison') ? 0 : parseInt(cur);
+  const prev = document.getElementById('cl-prev');
+  const next = document.getElementById('cl-next');
+  if (prev) prev.disabled = (cur === 'saison');
+  if (next) next.disabled = (curNum >= CONFIG.nbJournees);
+  const sub = document.getElementById('cl-subtitle');
+  if (sub) sub.textContent = cur === 'saison'
+    ? saisonLabel(APP.saisonAffichee || saisonKey(CONFIG.saison))
+    : '';
+}
+
+
+function changerTypeClassement() {
+  const val = document.getElementById('select-classement-type')?.value;
+  if (val === 'saison') chargerClassementSaison();
+  else chargerClassementJournee(parseInt(val));
+}
+
+function chargerClassementSaison() {
+  const container = document.getElementById('classement-content');
+  if (container) container.innerHTML = '<div class="loading"><div class="spinner"></div>Calcul...</div>';
+
+  const avecBonus = document.getElementById('cl-avec-bonus')?.checked || false;
+
+  Promise.all(Array.from({length: CONFIG.nbJournees}, (_, i) =>
+    dbSaison('journees', `j${i+1}`).get()
+  )).then(async snaps => {
+    const totaux = Object.fromEntries(APP.joueurs.map(jo => [jo.id, { pts: 0, gains: 0 }]));
+
+    snaps.forEach((snap, snapIdx) => {
+      if (!snap.exists) return;
+      const snapData = snap.data();
+      snapData._journeeNum = snapIdx + 1; // numéro de journée (1-based)
+      const matchs   = snapData.matchs || [];
+      let soumissions = snapData.soumissions || {};
+      if (Object.keys(soumissions).length === 0) {
+        Object.keys(snapData).forEach(k => {
+          if (k.startsWith('soumissions.')) soumissions[k.replace('soumissions.','')] = snapData[k];
+        });
+      }
+      const statuts = snapData.statuts || {};
+      const tousScores = matchs.length > 0 && matchs.every(m => m.scoreReel !== null);
+
+      const ptsJ = Object.fromEntries(APP.joueurs.map(jo => [jo.id,
+        matchs.reduce((acc, match, idx2) => {
+          const p = soumissions[jo.id]?.[idx2];
+          return acc + (p && match.scoreReel ? calculerPoints(p, match.scoreReel) || 0 : 0);
+        }, 0)]));
+
+      APP.joueurs.forEach(jo => {
+        const st = statuts[jo.id];
+        if (st?.tardif && st?.penalite) ptsJ[jo.id] = Math.max(0, ptsJ[jo.id] + st.penalite);
+        // Joker : doubler les points de la journée
+        if (st?.joker === true) {
+          const base = ptsJ[jo.id];
+          ptsJ[jo.id] = base * 2;
+          // Stocker le détail du joker pour l'affichage
+          if (!totaux[jo.id].jokerDetail) {
+            totaux[jo.id].jokerDetail = { journee: 0, ptsBase: 0, ptsDouble: 0 };
+          }
+          totaux[jo.id].jokerDetail.ptsBase   = base;
+          totaux[jo.id].jokerDetail.ptsDouble  = ptsJ[jo.id];
+          totaux[jo.id].jokerDetail.journee    = snapData._journeeNum || 0;
+        }
+      });
+
+      if (tousScores) {
+        const soumettants = Object.fromEntries(APP.joueurs.filter(jo => soumissions[jo.id]).map(jo => [jo.id, ptsJ[jo.id]]));
+        const def = calculerPointsDefaut(soumettants);
+        APP.joueurs.forEach(jo => { if (!soumissions[jo.id]) ptsJ[jo.id] = def; });
+      }
+
+      const sorted = APP.joueurs.slice().sort((a, b) => ptsJ[b.id] - ptsJ[a.id]);
+      APP.joueurs.forEach(jo => { totaux[jo.id].pts += ptsJ[jo.id]; });
+      if (sorted[0] && ptsJ[sorted[0].id] > 0) totaux[sorted[0].id].gains += CONFIG.gains.premier;
+      if (sorted[1] && ptsJ[sorted[1].id] > 0) totaux[sorted[1].id].gains += CONFIG.gains.deuxieme;
+      if (sorted[2] && ptsJ[sorted[2].id] > 0) totaux[sorted[2].id].gains += CONFIG.gains.troisieme;
+    });
+
+    // ── Points de base (sans bonus) ──────────────────────────
+    const ptsSansBonus = Object.fromEntries(APP.joueurs.map(jo => [jo.id, totaux[jo.id].pts]));
+
+    // ── Bonus fin de saison (si cochés) ─────────────────────
+    let bonusDetails = Object.fromEntries(APP.joueurs.map(jo => [jo.id, {}]));
+    let classementReel = null;
+    let buteurReel     = null;
+    let espnErreur     = null;
+
+    if (avecBonus) {
+      try {
+        // Charger pronostics bonus Firebase
+        const bonusSnap = await dbSaison('bonus', 'saison').get();
+        const bonusData = bonusSnap.exists ? bonusSnap.data() : {};
+
+        // Charger classement réel ESPN
+        const rStand = await fetch('https://site.api.espn.com/apis/v2/sports/soccer/fra.1/standings?groups=8');
+        const dStand = await rStand.json();
+        classementReel = (dStand.children?.[0]?.standings?.entries || [])
+          .map((e, i) => ({ rang: i+1, nom: e.team?.displayName, abbr: e.team?.abbreviation }));
+
+        // Charger meilleur buteur depuis le scoreboard
+        const rScore = await fetch('https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard?dates=20250801-20260531&limit=500');
+        const dScore = await rScore.json();
+        const scorers = {};
+        (dScore.events || []).forEach(ev => {
+          (ev.competitions?.[0]?.details || []).forEach(detail => {
+            if (detail.type?.text === 'Goal' && detail.athletesInvolved?.[0]) {
+              const name = detail.athletesInvolved[0].displayName;
+              scorers[name] = (scorers[name] || 0) + 1;
+            }
+          });
+        });
+        const topEntry = Object.entries(scorers).sort((a,b) => b[1]-a[1])[0];
+        buteurReel = topEntry ? { nom: topEntry[0], buts: topEntry[1] } : null;
+
+        const top3Reel  = classementReel.slice(0, 3).map(e => e.nom);
+        const flop3Reel = classementReel.slice(-3).map(e => e.nom);
+
+        // Normaliser un nom pour comparaison floue
+        const norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]/g,' ').trim();
+        const matchNom = (pronoNom, reelNom) => {
+          const p = norm(pronoNom), r = norm(reelNom);
+          const pw = p.split(' '), rw = r.split(' ');
+          return pw.some(w => w.length > 3 && rw.some(rw2 => rw2.includes(w) || w.includes(rw2)));
+        };
+
+        APP.joueurs.forEach(jo => {
+          const b = bonusData[jo.id];
+          if (!b) return;
+          const det = {};
+
+          // Champion
+          if (b.champion && top3Reel[0] && matchNom(b.champion, top3Reel[0])) {
+            det.champion = CONFIG.bonusSaison.champion;
+            totaux[jo.id].pts += CONFIG.bonusSaison.champion;
+          }
+
+          // Top 3 dans l'ordre
+          const topProno = [b.champion, b.top2, b.top3];
+          const matchesTop = topProno.map((t, i) => t && top3Reel[i] && matchNom(t, top3Reel[i]));
+          const nbMatchTop = matchesTop.filter(Boolean).length;
+          if (nbMatchTop === 3 && !det.champion) {
+            det.top3Ordre = CONFIG.bonusSaison.top3Ordre;
+            totaux[jo.id].pts += CONFIG.bonusSaison.top3Ordre;
+          } else if (nbMatchTop >= 2) {
+            // Top 2 sur 3 ou désordre
+            const inTop = topProno.filter(t => t && top3Reel.some(r => matchNom(t, r))).length;
+            if (inTop >= 2) {
+              det.top2sur3 = CONFIG.bonusSaison.top2sur3;
+              totaux[jo.id].pts += CONFIG.bonusSaison.top2sur3;
+            }
+          }
+
+          // Flop 3
+          const flopProno = [b.flop1, b.flop2, b.flop3];
+          const matchesFlop = flopProno.filter(f => f && flop3Reel.some(r => matchNom(f, r))).length;
+          if (matchesFlop === 3) {
+            det.flop3Ordre = CONFIG.bonusSaison.flop3Ordre;
+            totaux[jo.id].pts += CONFIG.bonusSaison.flop3Ordre;
+          } else if (matchesFlop >= 2) {
+            det.flop2sur3 = CONFIG.bonusSaison.flop2sur3;
+            totaux[jo.id].pts += CONFIG.bonusSaison.flop2sur3;
+          }
+
+          // Buteur
+          if (buteurReel && b.buteur && matchNom(b.buteur, buteurReel.nom)) {
+            det.buteur = CONFIG.bonusSaison.buteur;
+            totaux[jo.id].pts += CONFIG.bonusSaison.buteur;
+            if (b.nbuts && parseInt(b.nbuts) === buteurReel.buts) {
+              det.nbuts = CONFIG.bonusSaison.nbuts;
+              totaux[jo.id].pts += CONFIG.bonusSaison.nbuts;
+            }
+          }
+
+          bonusDetails[jo.id] = det;
+        });
+
+      } catch(e) {
+        espnErreur = e.message;
+        console.warn('ESPN bonus:', e);
+      }
+    }
+
+    // ── Tri final ────────────────────────────────────────────
+    const sorted  = APP.joueurs.slice().sort((a, b) => totaux[b.id].pts - totaux[a.id].pts);
+    const monId   = APP.joueurActif?.id;
+    const saison  = saisonLabel(APP.saisonAffichee || saisonKey(CONFIG.saison));
+
+    let html = '<div class="card">';
+    html += '<div class="card-title">🏆 Classement général — ' + saison + '</div>';
+
+    // Bandeau ESPN (classement réel + buteur)
+    if (avecBonus && classementReel && classementReel.length > 0) {
+      const top3 = classementReel.slice(0,3).map(e => e.nom).join(', ');
+      const flop3 = classementReel.slice(-3).map(e => e.nom).join(', ');
+      html += '<div style="background:var(--bleu-l);border-radius:var(--border-radius-md);'
+        + 'padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--bleu)">'
+        + '<div style="margin-bottom:4px"><strong>🏆 Classement ESPN :</strong></div>'
+        + '<div>Top 3 : <strong>' + top3 + '</strong></div>'
+        + '<div>Flop 3 : <strong>' + flop3 + '</strong></div>'
+        + (buteurReel ? '<div>⚽ Meilleur buteur : <strong>' + buteurReel.nom + '</strong> (' + buteurReel.buts + ' buts)</div>' : '')
+        + '</div>';
+    } else if (avecBonus && espnErreur) {
+      html += '<div style="background:var(--rouge-l);border-radius:8px;padding:8px 12px;'
+        + 'margin-bottom:10px;font-size:12px;color:var(--rouge)">⚠️ ESPN indisponible</div>';
+    }
+
+    // En-tête colonnes
+    html += '<div style="display:grid;grid-template-columns:32px 1fr '
+      + (avecBonus ? '60px 60px' : '60px')
+      + ' 40px;gap:4px;padding:4px 8px;font-size:10px;font-weight:500;'
+      + 'color:var(--gris);text-transform:uppercase;margin-bottom:4px">'
+      + '<div></div><div>Joueur</div>'
+      + (avecBonus ? '<div style="text-align:right">Sans</div><div style="text-align:right">Avec</div>' : '<div style="text-align:right">Pts</div>')
+      + '<div style="text-align:right">Gains</div>'
+      + '</div>';
+
+    sorted.forEach((jo, i) => {
+      const rang     = i + 1;
+      const ptsBase  = ptsSansBonus[jo.id] || 0;
+      const ptsTotal = totaux[jo.id].pts || 0;
+      const bonusPts = ptsTotal - ptsBase;
+      const gains    = totaux[jo.id].gains || 0;
+      const isMe     = jo.id === monId;
+      const det      = bonusDetails[jo.id] || {};
+      const hasDet   = Object.keys(det).length > 0;
+
+      html += '<div class="classement-row' + (isMe ? ' moi' : '') + '"'
+        + ' style="cursor:' + ((avecBonus && hasDet) || totaux[jo.id].jokerDetail ? 'pointer' : 'default') + '"'
+        + (avecBonus && hasDet ? ' data-bonus-id="' + jo.id + '"  onclick="toggleBonusDetail(this.dataset.bonusId)"' : '') + ((avecBonus && hasDet) || totaux[jo.id].jokerDetail ? '' : '')
+        + '>'
+        + '<div class="rang-badge ' + (rang<=3?'rang-'+rang:'rang-other') + '">'
+        + (rang<=3?['🥇','🥈','🥉'][i]:rang) + '</div>'
+        + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom
+        + (totaux[jo.id].jokerDetail ? ' <span title="Joker J' + totaux[jo.id].jokerDetail.journee
+            + '" style="font-size:12px">🃏</span>' : '')
+        + (avecBonus && hasDet ? ' <span style="font-size:10px;color:var(--or)">▸</span>' : '')
+        + '</div>';
+
+      if (avecBonus) {
+        html += '<div style="text-align:right;font-size:13px;color:var(--gris)">'
+          + ptsBase + '<span style="font-size:10px">pts</span></div>';
+        html += '<div style="text-align:right">'
+          + '<span style="font-size:15px;font-weight:700;color:var(--orange)">' + ptsTotal + '</span>'
+          + '<span style="font-size:10px;color:var(--gris)">pts</span>'
+          + (bonusPts > 0 ? '<br><span style="font-size:10px;color:var(--or)">+' + bonusPts + 'b</span>' : '')
+          + '</div>';
+      } else {
+        html += '<div class="classement-pts">' + ptsTotal + '<span>pts</span></div>';
+      }
+
+      html += '<div class="classement-gains">' + gains + '€</div>';
+      html += '</div>';
+
+      // Détail bonus (masqué par défaut, toggle au clic)
+      // Panneau dépliable : bonus ET joker
+      const jokerDet = totaux[jo.id].jokerDetail;
+      const hasPanel = (avecBonus && hasDet) || jokerDet;
+      if (hasPanel) {
+        const detLabels = {
+          champion:   "Champion",
+          top3Ordre:  "Top 3 dans l'ordre",
+          top2sur3:   "2 équipes sur 3",
+          flop3Ordre: "Flop 3 dans l'ordre",
+          flop2sur3:  "2 relégués sur 3",
+          buteur:     "Meilleur buteur",
+          nbuts:      "Nombre de buts exact",
+        };
+        let detHtml = '<div id="bonus-det-' + jo.id + '" style="display:none;'
+          + 'background:var(--or-l);border-radius:8px;padding:8px 12px;'
+          + 'margin:-6px 8px 6px 8px;font-size:12px">';
+
+        // Ligne joker
+        if (jokerDet) {
+          detHtml += '<div style="display:flex;justify-content:space-between;padding:3px 0;'
+            + 'border-bottom:1px dashed var(--or);margin-bottom:4px">'
+            + '<span>🃏 Joker J' + jokerDet.journee + ' (×2)</span>'
+            + '<span style="font-weight:600;color:var(--or)">'
+            + jokerDet.ptsBase + ' → ' + jokerDet.ptsDouble + ' pts</span></div>';
+        }
+
+        // Lignes bonus
+        if (avecBonus && hasDet) {
+          Object.entries(det).forEach(([k, v]) => {
+            detHtml += '<div style="display:flex;justify-content:space-between;padding:2px 0">'
+              + '<span>🎯 ' + (detLabels[k] || k) + '</span>'
+              + '<span style="font-weight:600;color:var(--or)">+' + v + ' pts</span></div>';
+          });
+          detHtml += '<div style="border-top:1px solid var(--or);margin-top:4px;padding-top:4px;'
+            + 'display:flex;justify-content:space-between;font-weight:600">'
+            + '<span>Total bonus</span>'
+            + '<span style="color:var(--or)">+' + Object.values(det).reduce((a,b)=>a+b,0) + ' pts</span>'
+            + '</div>';
+        }
+
+        detHtml += '</div>';
+        html += detHtml;
+      }
+    });
+
+    html += '</div>';
+    if (container) container.innerHTML = html;
+  }).catch(e => {
+    console.error(e);
+    if (container) container.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><p>Erreur</p></div>';
+  });
+}
+
+
+function chargerClassementJournee(j) {
+  const container = document.getElementById('classement-content');
+  if (container) container.innerHTML = '<div class="loading"><div class="spinner"></div>Chargement J' + j + '...</div>';
+
+  dbSaison('journees', `j${j}`).get().then(snap => {
+    if (!snap.exists) {
+      container.innerHTML = '<div class="empty-state"><div class="icon">📭</div><p>Journée ' + j + ' non disponible.</p></div>';
+      return;
+    }
+    const snapData = snap.data();
+    const matchs   = snapData.matchs || [];
+    let soumissions = snapData.soumissions || {};
+    if (Object.keys(soumissions).length === 0) {
+      Object.keys(snapData).forEach(k => {
+        if (k.startsWith('soumissions.')) soumissions[k.replace('soumissions.','')] = snapData[k];
+      });
+    }
+
+    // Calculer les points de chaque joueur pour cette journée
+    const ptsJ  = Object.fromEntries(APP.joueurs.map(jo => [jo.id,
+      matchs.reduce((acc, match, idx) => {
+        const p = soumissions[jo.id]?.[idx];
+        return acc + (p && match.scoreReel ? calculerPoints(p, match.scoreReel) || 0 : 0);
+      }, 0)]));
+
+    // Trier
+    // Trier tous les joueurs (soumis ou non) par points décroissants
+    const sorted = APP.joueurs.slice()
+      .sort((a, b) => (ptsJ[b.id] || 0) - (ptsJ[a.id] || 0));
+
+    const monId   = APP.joueurActif?.id;
+    const aTousScores = matchs.length > 0 && matchs.every(m => m.scoreReel !== null);
+
+    let html = '<div class="card"><div class="card-title">📊 Classement Journée ' + j + '</div>';
+
+    if (!aTousScores) {
+      html += '<p class="text-sm text-muted" style="margin-bottom:10px">⏳ Scores pas encore tous entrés — points provisoires</p>';
+    }
+
+    const medals = { 1:'🥇', 2:'🥈', 3:'🥉' };
+    let ptsPrecedents = -1, rangCourant = 1;
+
+    sorted.forEach((jo, i) => {
+      const pts  = ptsJ[jo.id] || 0;
+      const rang = (pts !== ptsPrecedents) ? i + 1 : rangCourant;
+      rangCourant = rang; ptsPrecedents = pts;
+      const gain = [CONFIG.gains.premier, CONFIG.gains.deuxieme, CONFIG.gains.troisieme][rang-1] || 0;
+      const isMe = jo.id === monId;
+
+      const aSoumis2 = !!soumissions[jo.id];
+      html += '<div class="classement-row' + (isMe ? ' moi' : '') + '"'
+        + (aSoumis2 ? '' : ' style="opacity:0.4"') + '>'
+        + '<div class="rang-badge ' + (aSoumis2 && rang <= 3 ? 'rang-' + rang : 'rang-other') + '">'
+        + (aSoumis2 ? (medals[rang] || rang) : '—') + '</div>'
+        + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + '</div>'
+        + '<div class="classement-pts">' + (aSoumis2 ? pts : '0') + '<span>pts</span></div>'
+        + (aTousScores && gain > 0 && aSoumis2
+            ? '<div class="classement-gains">+' + gain + '€</div>'
+            : '<div></div>')
+        + '</div>';
+    });
+
+    html += '</div>';
+    if (container) container.innerHTML = html;
+  }).catch(e => {
+    console.error(e);
+    if (container) container.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><p>Erreur</p></div>';
+  });
+}
+
+
+// ── Bonus ─────────────────────────────────────────────────────
+function chargerBonus() {
+  const monId=APP.joueurActif?.id;
+  if(APP.journeeActive<CONFIG.regles.bonusSaisonDepuisJournee&&!APP.estAdmin) {
+    document.getElementById('tab-bonus').innerHTML=`<div style="padding:16px"><div class="empty-state"><div class="icon">🔒</div><p>Disponible à partir de la Journée ${CONFIG.regles.bonusSaisonDepuisJournee}.</p></div></div>`; return;
+  }
+  const unsub=dbSaison('bonus', 'saison').onSnapshot(snap=>renderBonus(snap.exists?snap.data():{},monId));
+  APP.ecouteurs.push(unsub);
+}
+
+function renderBonus(data,monId) {
+  const container = document.getElementById('tab-bonus');
+  if (!container) return;
+
+  const mb  = monId ? (data[monId] || {}) : {};
+  const js  = !!data[monId + '_soumis'];
+  const ro  = (js && !APP.estAdmin) ? 'readonly' : '';
+
+  // Liste équipes dynamique ou fallback statique
+  const eq = (APP.equipesL1 && APP.equipesL1.length > 0)
+    ? APP.equipesL1
+    : ['Angers','Auxerre','Brest','Le Havre','Lens','Lille','Lorient',
+       'Lyon','Marseille','Metz','Monaco','Montpellier','Nantes','Nice',
+       'Paris FC','Paris SG','Rennes','Reims','Strasbourg','Toulouse'].sort();
+
+  const datalist = '<datalist id="eq-bonus-list">' +
+    eq.map(e => '<option value="' + e + '">').join('') + '</datalist>';
+
+  // En-tête de section coloré
+  function secHdr(icon, titre, pts, bg, color) {
+    return '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;' +
+           'border-radius:var(--border-radius-md);margin-bottom:10px;background:' + bg + '">' +
+           '<span style="font-size:16px">' + icon + '</span>' +
+           '<span style="font-size:13px;font-weight:500;color:' + color + '">' + titre + '</span>' +
+           '<span style="margin-left:auto;font-size:11px;font-weight:500;' +
+           'background:var(--color-background-primary);color:' + color + ';' +
+           'padding:2px 8px;border-radius:20px">' + pts + '</span></div>';
+  }
+
+  // Champ de saisie
+  function inpF(id, label, placeholder, type) {
+    type = type || 'text';
+    var val = mb[id.replace('b-', '')] || '';
+    return '<div style="display:flex;flex-direction:column;gap:2px">' +
+           '<span style="font-size:11px;color:var(--color-text-secondary)">' + label + '</span>' +
+           '<input list="eq-bonus-list" id="' + id + '" type="' + type + '" class="bonus-input"' +
+           ' value="' + val + '" placeholder="' + placeholder + '" ' + ro + '></div>';
+  }
+
+  // Message statut
+  var statusMsg;
+  if (js) {
+    statusMsg = '<div style="background:var(--color-background-success);border-radius:8px;' +
+                'padding:8px 12px;font-size:12px;color:var(--color-text-success);' +
+                'margin-bottom:14px;display:flex;align-items:center;gap:6px">' +
+                '&#10003; Vos pronostics sont soumis et verrouilles.</div>';
+  } else {
+    statusMsg = '<p style="font-size:12px;color:var(--color-text-secondary);' +
+                'margin-bottom:14px;line-height:1.5">Disponible a partir de la Journee ' +
+                CONFIG.regles.bonusSaisonDepuisJournee +
+                ' - Soumis une seule fois, non modifiable</p>';
+  }
+
+  // Bouton soumettre
+  var btnSoumettre = (!js && monId)
+    ? '<button class="btn-soumettre" onclick="soumettreBonus()" style="margin-top:4px">' +
+      '&#10003; Soumettre mes pronostics de fin de saison</button>'
+    : '';
+
+  // Construire le HTML
+  var html = '<div style="padding:16px">' + datalist + statusMsg;
+
+  // TOP 3
+  html += '<div style="margin-bottom:16px">';
+  html += secHdr("&#127942;", "Podium - Top 3", "jusqu'à 50 pts",
+                 "var(--color-background-warning)", "var(--color-text-warning)");
+  html += '<div style="display:grid;grid-template-columns:28px 1fr;gap:8px;' +
+          'align-items:center;margin-bottom:8px">';
+  html += '<div style="width:28px;height:28px;border-radius:50%;background:#FFD700;' +
+          'color:#7B5C00;display:flex;align-items:center;justify-content:center;' +
+          'font-size:16px;flex-shrink:0">&#129351;</div>';
+  html += inpF('b-champion', 'Champion - 1er', 'Equipe gagnante du titre');
+  html += '</div>';
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-left:36px">';
+  html += inpF('b-top2', '&#129352; 2eme', 'Equipe');
+  html += inpF('b-top3', '&#129353; 3eme', 'Equipe');
+  html += '</div></div>';
+
+  // FLOP 3
+  html += '<div style="margin-bottom:16px">';
+  html += secHdr("&#128308;", "Relegation - Flop 3", "jusqu'à 25 pts",
+                 "var(--color-background-danger)", "var(--color-text-danger)");
+  html += '<div style="display:flex;flex-direction:column;gap:8px">';
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  html += inpF('b-flop1', 'Relegue 1', 'Equipe');
+  html += inpF('b-flop2', 'Relegue 2', 'Equipe');
+  html += '</div>';
+  html += '<div style="max-width:calc(50% - 4px)">';
+  html += inpF('b-flop3', 'Relegue 3', 'Equipe');
+  html += '</div></div></div>';
+
+  // BUTEUR
+  html += '<div style="margin-bottom:16px">';
+  html += secHdr("&#9917;", "Meilleur buteur", "jusqu'à 25 pts",
+                 "var(--color-background-info)", "var(--color-text-info)");
+  html += '<div style="display:grid;grid-template-columns:1fr 80px;gap:8px;align-items:end">';
+  html += '<div style="display:flex;flex-direction:column;gap:2px">';
+  html += '<span style="font-size:11px;color:var(--color-text-secondary)">Nom du joueur</span>';
+  html += '<input id="b-buteur" class="bonus-input" value="' + (mb.buteur || '') + '"' +
+          ' placeholder="Ex: Mbappe" ' + ro + ' style="font-size:13px"></div>';
+  html += '<div style="display:flex;flex-direction:column;gap:2px">';
+  html += '<span style="font-size:11px;color:var(--color-text-secondary)">Buts</span>';
+  html += '<input id="b-nbuts" type="number" class="bonus-input" value="' + (mb.nbuts || '') + '"' +
+          ' placeholder="22" min="0" max="60" ' + ro + ' style="font-size:13px;text-align:center"></div>';
+  html += '</div></div>';
+
+  html += btnSoumettre + '</div>';
+  container.innerHTML = html;
+}
+
+
+async function soumettreBonus() {
+  if(!APP.joueurActif||!confirm('Soumettre ? Non modifiable ensuite.')) return;
+  try {
+    await dbSaison('bonus', 'saison').set({
+      [APP.joueurActif.id]: {
+        champion:document.getElementById('b-champion').value, top2:document.getElementById('b-top2').value,
+        top3:document.getElementById('b-top3').value, flop1:document.getElementById('b-flop1').value,
+        flop2:document.getElementById('b-flop2').value, flop3:document.getElementById('b-flop3').value,
+        buteur:document.getElementById('b-buteur').value, nbuts:document.getElementById('b-nbuts').value,
+      },
+      [`${APP.joueurActif.id}_soumis`]:true,
+    },{merge:true});
+    showToast('✅ Pronostics fin de saison soumis !','success');
+  } catch(e) { showToast('Erreur','error'); }
+}
+
+// ── Profil ─────────────────────────────────────────────────────
+function chargerProfil() {
+  const jo=APP.joueurActif;
+  if(!jo&&!APP.estAdmin) { document.getElementById('tab-profil').innerHTML='<div style="padding:16px"><div class="empty-state"><p>Connectez-vous.</p></div></div>'; return; }
+  if(APP.estAdmin&&!jo) { document.getElementById('tab-profil').innerHTML='<div style="padding:16px"><div class="empty-state"><div class="icon">🔧</div><p>Profil réservé aux joueurs.</p></div></div>'; return; }
+  const emojis=['⚽','🦁','🐺','🦊','🐯','🦅','🦋','⚡','🌟','🔥','💎','🎯','🏆','🎭','🦄','🎸','🚀','🌈','⚓','🎪'];
+  APP.db.collection('profils').doc(jo.id).get().then(snap=>{
+    const p=snap.exists?snap.data():{emoji:jo.emoji,equipe:jo.equipe};
+    document.getElementById('tab-profil').innerHTML=`<div style="padding:16px"><div class="card">
+      <div class="card-title">👤 Mon Profil</div>
+      <div style="text-align:center;margin-bottom:16px">
+        <div style="font-size:56px" id="preview-emoji">${p.emoji||jo.emoji}</div>
+        <div style="font-size:18px;font-weight:500">${jo.nom}</div></div>
+      <label class="profil-label">Avatar</label>
+      <div class="profil-avatar-picker">${emojis.map(e=>`<div class="avatar-option ${e===(p.emoji||jo.emoji)?'selected':''}" onclick="selEmoji('${e}')">${e}</div>`).join('')}</div>
+      <div class="mt-12"><label class="profil-label">Équipe préférée</label>
+        <input class="profil-input" id="input-equipe" value="${p.equipe||jo.equipe||''}" placeholder="Ex: Olympique Lyonnais"></div>
+      <div class="mt-12"><label class="profil-label">Ma devise</label>
+        <input class="profil-input" id="input-devise" value="${p.devise||''}" placeholder="Ex: Toujours premier !"></div>
+      <button class="btn-primary mt-16" onclick="sauverProfil()">💾 Sauvegarder</button>
+    </div></div>`;
+  });
+}
+
+let emojiSelectionne=null;
+function selEmoji(e) {
+  emojiSelectionne=e;
+  document.getElementById('preview-emoji').textContent=e;
+  document.querySelectorAll('.avatar-option').forEach(el=>el.classList.toggle('selected',el.textContent.trim()===e));
+}
+
+async function sauverProfil() {
+  if(!APP.joueurActif) return;
+  const p={emoji:emojiSelectionne||APP.joueurActif.emoji,equipe:document.getElementById('input-equipe').value,devise:document.getElementById('input-devise').value,updatedAt:Date.now()};
+  try {
+    await APP.db.collection('profils').doc(APP.joueurActif.id).set(p,{merge:true});
+    APP.joueurActif.emoji=p.emoji; APP.joueurActif.equipe=p.equipe;
+    document.querySelector('.user-avatar').textContent=p.emoji;
+    document.querySelector('.user-team').textContent=p.equipe;
+    showToast('✅ Profil sauvegardé !','success');
+  } catch(e) { showToast('Erreur','error'); }
+}
+
+// ── Admin journée ─────────────────────────────────────────────
+async function ouvrirAdminJournee() {
+  const j = APP.journeeActive;
+  document.getElementById('modal-title').textContent = `📅 Admin — Journée ${j}`;
+  document.getElementById('modal-body').innerHTML =
+    `<div class="loading"><div class="spinner"></div>Chargement...</div>`;
+  ouvrirModal();
+
+  // Charger les données existantes de la journée
+  let matchsActuels = [];
+  let deadlineActuelle = '';
+  try {
+    const snap = await dbSaison('journees', `j${j}`).get();
+    if (snap.exists) {
+      matchsActuels   = snap.data().matchs   || [];
+      const dl        = snap.data().deadline || null;
+      if (dl) {
+        const d = new Date(dl);
+        deadlineActuelle = d.toISOString().slice(0,16);
+      }
+    }
+  } catch(e) { console.error(e); }
+
+  // Compléter avec des matchs vides si moins de 9
+  while (matchsActuels.length < CONFIG.nbMatchsParJournee) {
+    matchsActuels.push({ domicile:'', exterieur:'', date:'', timestamp:null, scoreReel:null });
+  }
+
+  // Utiliser les équipes dynamiques si disponibles, sinon fallback statique
+  const equipesL1 = (APP.equipesL1 && APP.equipesL1.length > 0)
+    ? APP.equipesL1
+    : ['Angers','Auxerre','Brest','Le Havre','Lens','Lille',
+       'Lorient','Lyon','Marseille','Metz','Monaco','Montpellier',
+       'Nantes','Nice','Paris FC','Paris SG','Rennes','Reims',
+       'Strasbourg','Toulouse'].sort();
+
+  const datalistHtml = `<datalist id="eq-admin-list">${equipesL1.map(e => `<option value="${e}">`).join('')}</datalist>`;
+
+  const matchsHtml = matchsActuels.map((m, idx) => `
+    <div style="background:var(--color-background-secondary);border-radius:8px;
+                padding:10px;margin-bottom:8px;border:1px solid var(--color-border-tertiary)">
+      <div style="display:flex;align-items:center;gap:4px;margin-bottom:8px">
+        <span style="font-size:11px;font-weight:500;color:var(--color-text-secondary);
+                     min-width:20px">M${idx+1}</span>
+        <input list="eq-admin-list" class="profil-input" id="m${idx}-dom"
+          value="${m.domicile||''}" placeholder="Domicile"
+          style="flex:1;font-size:13px;padding:7px 10px">
+        <span style="font-weight:700;color:var(--gris);padding:0 4px">vs</span>
+        <input list="eq-admin-list" class="profil-input" id="m${idx}-ext"
+          value="${m.exterieur||''}" placeholder="Extérieur"
+          style="flex:1;font-size:13px;padding:7px 10px">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="datetime-local" class="profil-input" id="m${idx}-date"
+          value="${m.timestamp ? new Date(m.timestamp).toISOString().slice(0,16) : ''}"
+          style="flex:1;font-size:12px;padding:6px 8px">
+        <span style="font-size:11px;color:var(--gris);white-space:nowrap">Score :</span>
+        <input type="number" id="m${idx}-sdom" min="0" max="20"
+          value="${m.scoreReel?.dom ?? ''}" placeholder="—"
+          style="width:36px;border:1px solid var(--color-border-tertiary);border-radius:6px;
+                 text-align:center;font-size:13px;font-weight:700;padding:5px 2px">
+        <span style="font-weight:700;color:var(--gris)">-</span>
+        <input type="number" id="m${idx}-sext" min="0" max="20"
+          value="${m.scoreReel?.ext ?? ''}" placeholder="—"
+          style="width:36px;border:1px solid var(--color-border-tertiary);border-radius:6px;
+                 text-align:center;font-size:13px;font-weight:700;padding:5px 2px">
+      </div>
+    </div>`).join('');
+
+  document.getElementById('modal-body').innerHTML = `
+    ${datalistHtml}
+    <div style="margin-bottom:12px">
+      <label class="profil-label">⏰ Deadline de saisie des pronostics</label>
+      <input type="datetime-local" class="profil-input" id="admin-deadline"
+        value="${deadlineActuelle}" style="margin-bottom:4px">
+      <p class="text-sm text-muted">= 1h avant le 1er match (auto si vous remplissez les dates)</p>
+    </div>
+    <hr class="divider">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <label class="profil-label" style="margin:0">⚽ Les 9 matchs</label>
+      <button onclick="chargerDepuisAPI(${j}, this)"
+        style="font-size:11px;background:var(--bleu-l);color:var(--bleu);
+               border:none;border-radius:6px;padding:5px 10px;cursor:pointer;font-weight:500">
+        🔄 Recharger depuis API
       </button>
     </div>
+    ${matchsHtml}
+    <button class="btn-primary" onclick="validerJourneeManuelle(${j})" style="margin-top:4px">
+      ✅ Enregistrer la journée ${j}
+    </button>
+    <hr class="divider">
+    <button class="btn-danger" onclick="resetJournee(${j})">
+      🗑️ Réinitialiser la journée ${j}
+    </button>
+    <p class="text-sm text-muted text-center mt-8">Efface tous les pronostics.</p>`;
+}
 
-    <div id="tab-grille"     class="section tab-content active"></div>
-    <div id="tab-resultats"  class="section tab-content"></div>
-    <div id="tab-classement" class="section tab-content"></div>
-    <div id="tab-bonus"      class="section tab-content"></div>
-    <div id="tab-profil"     class="section tab-content"></div>
-    <div id="tab-palmares"   class="section tab-content"></div>
-    <div id="tab-admin"      class="section tab-content"></div>
+// Recharger une journée depuis l'API et remplir les champs
+async function chargerDepuisAPI(j) {
+  const saisonInput = CONFIG.saison;
+  const btn = event.target;
+  btn.textContent = '⏳ Chargement...';
+  btn.disabled = true;
 
-  </div>
+  const matchs = await fetchJourneeAPI(j, saisonInput);
+  if (!matchs || matchs.length === 0) {
+    showToast(`Journée ${j} non trouvée sur TheSportsDB`, 'error');
+    btn.textContent = '🔄 Recharger depuis API';
+    btn.disabled = false;
+    return;
+  }
 
-</div><!-- /app -->
+  matchs.forEach((m, idx) => {
+    const dom  = document.getElementById(`m${idx}-dom`);
+    const ext  = document.getElementById(`m${idx}-ext`);
+    const date = document.getElementById(`m${idx}-date`);
+    const sdom = document.getElementById(`m${idx}-sdom`);
+    const sext = document.getElementById(`m${idx}-sext`);
+    if (dom)  dom.value  = m.domicile  || '';
+    if (ext)  ext.value  = m.exterieur || '';
+    if (date && m.timestamp) date.value = new Date(m.timestamp).toISOString().slice(0,16);
+    if (sdom && m.scoreReel?.dom !== undefined) sdom.value = m.scoreReel.dom ?? '';
+    if (sext && m.scoreReel?.ext !== undefined) sext.value = m.scoreReel.ext ?? '';
+  });
 
-<!-- Modal -->
-<div id="modal-overlay" class="modal-overlay">
-  <div class="modal">
-    <div class="modal-title">
-      <span id="modal-title">Titre</span>
-      <button class="modal-close" onclick="fermerModal()">✕</button>
-    </div>
-    <div id="modal-body"></div>
-  </div>
-</div>
+  // Auto-remplir deadline = 1h avant le 1er match
+  const premierTs = matchs.find(m => m.timestamp)?.timestamp;
+  if (premierTs) {
+    const dl = document.getElementById('admin-deadline');
+    if (dl) dl.value = new Date(premierTs - 3600000).toISOString().slice(0,16);
+  }
 
-<!-- Toast -->
-<div id="toast" class="toast"></div>
+  btn.textContent = '✅ Rechargé';
+  showToast(`Journée ${j} chargée depuis TheSportsDB`, 'success');
+}
 
-<!-- Scripts -->
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-<script src="config.js?v=202605182006"></script>
-<script src="js/joueurs.js?v=202605100556"></script>
-<script src="js/saisons.js?v=202605100636"></script>
-<script src="js/calendrier.js?v=202605100607"></script>
-<script src="js/app.js?v=202605240556"></script>
+// Valider la journée saisie manuellement
+async function validerJourneeManuelle(j) {
+  const matchs = [];
+  let premierTs = null;
 
-<script>
-  document.getElementById('app-header').style.display = 'block';
-  document.getElementById('section-login').style.display = 'flex';
-</script>
-</body>
-</html>
+  for (let idx = 0; idx < CONFIG.nbMatchsParJournee; idx++) {
+    const dom  = document.getElementById(`m${idx}-dom`)?.value?.trim()  || '';
+    const ext  = document.getElementById(`m${idx}-ext`)?.value?.trim()  || '';
+    const dateV = document.getElementById(`m${idx}-date`)?.value        || '';
+    const sdom = document.getElementById(`m${idx}-sdom`)?.value;
+    const sext = document.getElementById(`m${idx}-sext`)?.value;
+
+    const ts = dateV ? new Date(dateV).getTime() : null;
+    if (ts && !premierTs) premierTs = ts;
+
+    const scoreReel = (sdom !== '' && sext !== '' && sdom !== undefined && sext !== undefined)
+      ? { dom: parseInt(sdom), ext: parseInt(sext) }
+      : null;
+
+    matchs.push({
+      domicile:  dom,
+      exterieur: ext,
+      date:      dateV ? formaterDate(dateV.slice(0,10), dateV.slice(11) + ':00') : '',
+      timestamp: ts,
+      scoreReel,
+      idApi: null,
+    });
+  }
+
+  // Deadline : champ manuel OU 1h avant le 1er match
+  const dlInput = document.getElementById('admin-deadline')?.value;
+  const deadline = dlInput
+    ? new Date(dlInput).getTime()
+    : premierTs ? premierTs - (CONFIG.regles.delaiAvantMatchMinutes * 60000) : null;
+
+  try {
+    const ref = dbSaison('journees', `j${j}`);
+    const snap = await ref.get();
+    const soumissions = snap.exists ? (snap.data().soumissions || {}) : {};
+    const statuts     = snap.exists ? (snap.data().statuts     || {}) : {};
+
+    await ref.set({ matchs, deadline, soumissions, statuts, valideAt: Date.now(), valideAdmin: true });
+
+    fermerModal();
+    showToast(`✅ Journée ${j} enregistrée !`, 'success');
+
+    // Mettre à jour la détection de journée courante
+    APP.journeeActive = await detecterJourneeCouranteFirestore().catch(() => APP.journeeActive);
+    const badge = document.getElementById('header-journee-badge');
+    if (badge) badge.textContent = `J.${APP.journeeActive}`;
+
+    chargerTab('grille');
+  } catch(e) {
+    console.error(e);
+    showToast('Erreur enregistrement', 'error');
+  }
+}
+
+async function saisirDeadline(j) {
+  const val=document.getElementById('admin-deadline')?.value;
+  if(!val) return;
+  try { await dbSaison('journees', `j${j}`).set({deadline:new Date(val).getTime()},{merge:true}); fermerModal(); showToast(`⏰ Deadline J${j} enregistrée`,'success'); }
+  catch(e) { showToast('Erreur','error'); }
+}
+
+async function resetJournee(j) {
+  if(!confirm(`Réinitialiser la journée ${j} ?\nTous les pronostics seront effacés.`)) return;
+  try { await dbSaison('journees', `j${j}`).set({soumissions:{},statuts:{}},{merge:true}); fermerModal(); showToast(`✅ Journée ${j} réinitialisée`,'warning'); chargerTab('grille'); }
+  catch(e) { showToast('Erreur reset','error'); }
+}
+
+// ── Modal ────────────────────────────────────────────────────
+function ouvrirModal() { document.getElementById('modal-overlay').classList.add('show'); }
+function fermerModal()  { document.getElementById('modal-overlay').classList.remove('show'); }
+document.getElementById('modal-overlay')?.addEventListener('click', e => {
+  if(e.target===document.getElementById('modal-overlay')) fermerModal();
+});
+
+// ── Toast ────────────────────────────────────────────────────
+let toastTimer=null;
+function showToast(msg,type='default') {
+  const el=document.getElementById('toast'); if(!el) return;
+  el.textContent=msg; el.className=`toast ${type} show`;
+  if(toastTimer) clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.classList.remove('show'),3000);
+}
+
+// ── Utilitaires ──────────────────────────────────────────────
+function genererMatchsVides() {
+  return Array.from({length:CONFIG.nbMatchsParJournee},(_,i)=>({domicile:`Équipe ${i+1} D`,exterieur:`Équipe ${i+1} E`,date:'',scoreReel:null}));
+}
+
+// ── Sauvegarde règles soumissions tardives (session uniquement) ─
+// Pour rendre permanent : modifier config.js
+function sauverRegleSansProno(val) {
+  CONFIG.regles.sansPronostic = val;
+  showToast('Règle mise à jour (non permanente — modifiez config.js)', 'warning');
+}
+function sauverPenalite(val) {
+  if (isNaN(val) || val > 0) return;
+  CONFIG.regles.penaliteRetard = val;
+  showToast('Pénalité mise à jour (non permanente — modifiez config.js)', 'warning');
+}
+function sauverDelaiReouverture(val) {
+  if (isNaN(val) || val < 1) return;
+  CONFIG.regles.delaiReouvretureHeures = val;
+  showToast('Délai mis à jour (non permanent — modifiez config.js)', 'warning');
+}
+
+// ── Rafraîchir les scores depuis ESPN ────────────────────────
+async function rafraichirScoresESPN(j) {
+  const btn = document.getElementById('btn-refresh-scores');
+  if (btn) {
+    btn.innerHTML = '<div class="ball-wrap" style="width:20px;height:20px;display:inline-block;vertical-align:middle;margin-right:6px"></div>Chargement...';
+    btn.disabled = true;
+  }
+
+  try {
+    const snap = await dbSaison('journees', `j${j}`).get();
+    if (!snap.exists) { showToast('Journée non trouvée', 'error'); return; }
+    const data   = snap.data();
+    const matchs = data.matchs || [];
+
+    // Calculer la plage de dates : J-1 à J+1 autour de la journée
+    const timestamps = matchs.filter(m => m.timestamp).map(m => m.timestamp);
+    let dateMin, dateMax;
+    if (timestamps.length > 0) {
+      dateMin = new Date(Math.min(...timestamps) - 86400000); // -1 jour
+      dateMax = new Date(Math.max(...timestamps) + 86400000); // +1 jour
+    } else {
+      // Fallback : hier + demain
+      dateMin = new Date(Date.now() - 86400000);
+      dateMax = new Date(Date.now() + 86400000);
+    }
+    const fmt = d => d.toISOString().slice(0,10).replace(/-/g,'');
+    const url = 'https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard'
+              + '?dates=' + fmt(dateMin) + '-' + fmt(dateMax);
+
+    const resp   = await fetch(url);
+    const espnData = await resp.json();
+    const events = espnData.events || [];
+
+    if (events.length === 0) {
+      showToast('Aucun match ESPN sur cette période', 'warning');
+      return;
+    }
+
+    // Normaliser un nom d'équipe pour comparaison
+    // Alias : noms TheSportsDB → noms ESPN (sens unique uniquement)
+    const ALIAS_TO_ESPN = {
+      'rennes':             'stade rennais',
+      'paris sg':           'paris saint germain',
+      'monaco':             'as monaco',
+      'auxerre':            'aj auxerre',
+      'le havre':           'le havre ac',
+      'paris saint germain':'paris saint germain',
+    };
+
+    const normBase = s => (s || '').toLowerCase().normalize('NFD')
+      .replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+
+    const teamsMatch = (firebaseNom, espnNom) => {
+      const nf = normBase(firebaseNom);
+      const ne = normBase(espnNom);
+      // Correspondance directe
+      if (nf === ne || nf.includes(ne) || ne.includes(nf)) return true;
+      // Alias Firebase → ESPN (sens unique)
+      const nfAlias = ALIAS_TO_ESPN[nf] || nf;
+      if (nfAlias === ne || nfAlias.includes(ne) || ne.includes(nfAlias)) return true;
+      // Matching par mots significatifs
+      const wf = nf.split(' ').filter(w => w.length > 2);
+      const we = ne.split(' ').filter(w => w.length > 2);
+      return wf.some(w => we.some(w2 => w.includes(w2) || w2.includes(w)));
+    };
+
+    let mises_a_jour = 0;
+    const matchsUpdated = matchs.map(match => {
+      const espnEvent = events.find(ev => {
+        const teams = ev.competitions?.[0]?.competitors || [];
+        const h = teams[0]?.team?.displayName || '';
+        const a = teams[1]?.team?.displayName || '';
+        return teamsMatch(match.domicile, h) && teamsMatch(match.exterieur, a);
+      });
+
+      if (!espnEvent) return match;
+
+      const comp  = espnEvent.competitions?.[0];
+      const teams = comp?.competitors || [];
+      const scoreH = teams[0]?.score;
+      const scoreA = teams[1]?.score;
+      const status  = comp?.status?.type?.name || '';
+      const completed = comp?.status?.type?.completed;
+      const inProgress = status === 'STATUS_IN_PROGRESS'
+                      || status === 'STATUS_HALFTIME'
+                      || status === 'STATUS_SECOND_HALF'
+                      || status === 'STATUS_FIRST_HALF'
+                      || status === 'STATUS_END_PERIOD';
+
+      if ((completed || inProgress) && scoreH !== undefined && scoreH !== null && scoreH !== '') {
+        mises_a_jour++;
+        return {
+          ...match,
+          scoreReel: { dom: parseInt(scoreH), ext: parseInt(scoreA) },
+          scoreEnCours: inProgress && !completed,
+          statutMatch: comp?.status?.displayClock || '',
+        };
+      }
+      // Remettre scoreEnCours à false si match pas encore commencé
+      if (match.scoreEnCours && !inProgress && !completed) {
+        return { ...match, scoreEnCours: false };
+      }
+      return match;
+    });
+
+    await dbSaison('journees', `j${j}`).set({ ...data, matchs: matchsUpdated }, { merge: false });
+
+    const msg = mises_a_jour > 0
+      ? `✅ ${mises_a_jour} score(s) mis à jour`
+      : '⚠️ Aucun score disponible pour l\'instant';
+    showToast(msg, mises_a_jour > 0 ? 'success' : 'warning');
+    chargerTab('resultats');
+
+  } catch(e) {
+    console.error('rafraichirScoresESPN:', e);
+    showToast('Erreur ESPN : ' + e.message, 'error');
+  } finally {
+    const btn2 = document.getElementById('btn-refresh-scores');
+    if (btn2) { btn2.innerHTML = '⚽ Rafraîchir les scores'; btn2.disabled = false; }
+  }
+}
+
+
+
+// ── Joker ──────────────────────────────────────────────────────
+// Vérifier si le joueur a déjà utilisé son joker cette saison
+async function verifierJoker(joueurId) {
+  const snap = await APP.db.collection('config').doc('joueurs').get();
+  if (!snap.exists) return null;
+  const liste = snap.data().liste || [];
+  const jo = liste.find(j => j.id === joueurId);
+  return jo?.joker || null; // { journee, utiliseA }
+}
+
+// Poser le joker (avant soumission)
+async function poserJoker(numJournee) {
+  if (!APP.joueurActif) return;
+  const jokerExistant = await verifierJoker(APP.joueurActif.id);
+  if (jokerExistant) {
+    showToast('Joker déjà utilisé à la J' + jokerExistant.journee, 'error');
+    return;
+  }
+  if (!confirm('🃏 Activer votre joker sur la Journée ' + numJournee + ' ?\n'
+    + 'Vos points seront x2 sur cette journée.\n'
+    + '⚠️ Non annulable une fois soumis.')) return;
+
+  try {
+    // Marquer le joker dans config/joueurs
+    const snap = await APP.db.collection('config').doc('joueurs').get();
+    const liste = snap.data().liste || [];
+    const idx   = liste.findIndex(j => j.id === APP.joueurActif.id);
+    if (idx < 0) { showToast('Joueur non trouvé', 'error'); return; }
+    liste[idx].joker = { journee: numJournee, utiliseA: Date.now() };
+    await APP.db.collection('config').doc('joueurs').set({ liste }, { merge: true });
+    APP.joueurActif.joker = liste[idx].joker;
+    showToast('🃏 Joker activé pour la J' + numJournee + ' !', 'success');
+    chargerTab('grille');
+  } catch(e) {
+    console.error(e);
+    showToast('Erreur joker', 'error');
+  }
+}
+
+// Annuler le joker (avant soumission uniquement)
+async function annulerJoker() {
+  if (!APP.joueurActif || !confirm('Annuler votre joker ?')) return;
+  try {
+    const snap = await APP.db.collection('config').doc('joueurs').get();
+    const liste = snap.data().liste || [];
+    const idx   = liste.findIndex(j => j.id === APP.joueurActif.id);
+    if (idx >= 0) {
+      delete liste[idx].joker;
+      await APP.db.collection('config').doc('joueurs').set({ liste }, { merge: true });
+      delete APP.joueurActif.joker;
+      showToast('Joker annulé', 'default');
+      chargerTab('grille');
+    }
+  } catch(e) { showToast('Erreur annulation joker', 'error'); }
+}
+
+// Clôture d'une saison choisie via le sélecteur admin
+async function confirmerClotureSaisonSelectionnee() {
+  const sel   = document.getElementById('admin-select-cloture');
+  const key   = sel ? sel.value : saisonKey(CONFIG.saison);
+  const label = saisonLabel(key);
+
+  if (!confirm('Cloture definitive : ' + label + ' ?\n'
+    + 'Le palmares sera fige. Action irreversible.')) return;
+
+  try {
+    showToast('Calcul du palmares...', 'default');
+    const avant = APP.saisonAffichee;
+    APP.saisonAffichee = key;
+    await cloturerSaison();
+    APP.saisonAffichee = avant;
+    showToast('Saison ' + label + ' cloturee !', 'success');
+    chargerPalmares();
+  } catch(e) {
+    console.error(e);
+    showToast('Erreur cloture', 'error');
+  }
+}
