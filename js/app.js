@@ -18,11 +18,32 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.documentElement.style.setProperty('--orange', CONFIG.theme.couleurPrimaire);
   document.documentElement.style.setProperty('--bleu',   CONFIG.theme.couleurSecondaire);
   document.documentElement.style.setProperty('--vert',   CONFIG.theme.couleurVert);
-  document.querySelector('.app-header h1').textContent        = CONFIG.theme.nomApp;
-  // Sous-titre dynamique : met à jour le span #header-saison
+  // ── Appliquer le thème depuis config.js ────────────────────
+  const nomApp  = CONFIG.theme.nomApp  || "Pronostics L1";
+  const sousNom = CONFIG.theme.descriptionApp?.split(' · ')[0] || nomApp;
+
+  // Titre principal header
+  const h1El = document.querySelector('.app-header h1');
+  if (h1El) h1El.textContent = nomApp;
+
+  // Sous-titre (nom du groupe)
+  const subEl = document.getElementById('app-subtitle');
+  if (subEl) subEl.textContent = sousNom;
+
+  // Titre login
+  const loginTitleEl = document.getElementById('login-title');
+  if (loginTitleEl) loginTitleEl.textContent = nomApp;
+
+  // Titre de page (onglet navigateur)
+  document.title = '⚽ ' + nomApp;
+
+  // Meta PWA
+  const metaTitleEl = document.getElementById('meta-app-title');
+  if (metaTitleEl) metaTitleEl.setAttribute('content', nomApp);
+
+  // Saison dans header
   const headerSaisonEl = document.getElementById('header-saison');
   if (headerSaisonEl) headerSaisonEl.textContent = CONFIG.saison;
-  document.title = CONFIG.theme.nomApp;
 
   initFirebase();
   console.log('Après initFirebase - APP.db:', !!APP.db);
@@ -243,7 +264,7 @@ function chargerAdmin() {
 
       <!-- ── Calendrier ── -->
       <div class="card" style="margin-bottom:12px">
-        <div class="card-title" style="margin-bottom:8px">🔄 Calendrier &amp; équipes</div>
+        <div class="card-title" style="margin-bottom:8px">🔄 Calendrier & équipes</div>
         <button class="btn-primary" onclick="ouvrirCalendrierAdmin()" style="width:100%;margin-bottom:8px">
           📡 Charger depuis TheSportsDB
         </button>
@@ -310,14 +331,24 @@ function chargerAdmin() {
 
       <!-- ── Saison ── -->
       <div class="card">
-        <div class="card-title" style="margin-bottom:8px">🏁 Saison</div>
-        <button onclick="confirmerClotureSaison()"
+        <div class="card-title" style="margin-bottom:8px">🏁 Clôturer une saison</div>
+        <label class="profil-label">Sélectionner la saison à clôturer</label>
+        <select id="admin-select-cloture" class="profil-input" style="margin-bottom:10px">
+          ${(APP.listeSaisons && APP.listeSaisons.length > 0
+            ? APP.listeSaisons
+            : [saisonKey(CONFIG.saison)]
+          ).map(k =>
+            '<option value="' + k + '">' + saisonLabel(k)
+            + (k === saisonKey(CONFIG.saison) ? ' (courante)' : '') + '</option>'
+          ).join('')}
+        </select>
+        <button onclick="confirmerClotureSaisonSelectionnee()"
           style="width:100%;padding:12px;background:#C00000;color:white;border:none;
                  border-radius:10px;font-size:14px;font-weight:500;cursor:pointer">
-          🏁 Clôturer la saison ${CONFIG.saison}
+          🏁 Clôturer la saison sélectionnée
         </button>
         <p class="text-sm text-muted" style="margin-top:4px">
-          Archive la saison et calcule le palmarès final.
+          Archive la saison et calcule le palmarès final. Action irréversible.
         </p>
       </div>
 
@@ -520,10 +551,14 @@ function renderGrille(j, data) {
 
   const sb = document.getElementById('statut-bar');
   if (sb) sb.innerHTML = APP.joueurs.map(jo => {
-    const soumis  = !!soumissions[jo.id];
-    const tardif2 = data.statuts?.[jo.id]?.tardif === true;
-    const cls     = soumis ? (tardif2 ? 'en-cours' : 'soumis') : '';
-    const label   = soumis ? (tardif2 ? ' ⚠️' : ' ✓') : '';
+    const soumis   = !!soumissions[jo.id];
+    const statut2  = data.statuts?.[jo.id];
+    const tardif2  = statut2?.tardif === true;
+    const joker2   = statut2?.joker  === true;
+    const cls      = soumis ? (tardif2 ? 'en-cours' : 'soumis') : '';
+    const label    = soumis
+      ? (joker2 ? ' 🃏' : '') + (tardif2 ? ' ⚠️' : ' ✓')
+      : '';
     return '<div class="statut-joueur ' + cls + '"><div class="statut-dot"></div>'
       + jo.emoji + ' ' + jo.nom.split(' ')[0] + label + '</div>';
   }).join('');
@@ -617,7 +652,33 @@ function renderGrille(j, data) {
   } else if (!saisieOuverte) {
     bc.innerHTML = '<button class="btn-soumettre" disabled>⛔ Saisie fermée</button>';
   } else {
+    // Vérifier le joker du joueur
+    const monJoker   = APP.joueurActif?.joker;
+    const jokerDispo = !monJoker && !!monId;
+    const jokerSurJ  = monJoker?.journee === j;
+
+    let jokerHtml = '';
+    if (jokerDispo) {
+      jokerHtml = '<button onclick="poserJoker(' + j + ')"'
+        + ' style="width:100%;padding:9px;background:transparent;color:var(--or);'
+        + 'border:1.5px solid var(--or);border-radius:10px;font-size:13px;'
+        + 'font-weight:500;cursor:pointer;margin-top:8px">'
+        + '🃏 Activer mon joker sur cette journée (×2 pts)</button>';
+    } else if (jokerSurJ) {
+      jokerHtml = '<div style="background:var(--or-l);border:1.5px solid var(--or);'
+        + 'border-radius:10px;padding:8px 12px;margin-top:8px;'
+        + 'display:flex;align-items:center;justify-content:space-between;gap:8px">'
+        + '<span style="font-size:13px;font-weight:600;color:var(--or)">🃏 Joker activé — points ×2</span>'
+        + '<button onclick="annulerJoker()" style="font-size:11px;color:var(--gris);'
+        + 'background:none;border:none;cursor:pointer;text-decoration:underline">Annuler</button>'
+        + '</div>';
+    } else if (monJoker) {
+      jokerHtml = '<p class="text-sm text-muted text-center" style="margin-top:8px">'
+        + '🃏 Joker déjà utilisé (J' + monJoker.journee + ')</p>';
+    }
+
     bc.innerHTML = '<button class="btn-soumettre" onclick="soumettre(' + j + ')">✅ Soumettre mes pronostics</button>'
+      + jokerHtml
       + '<p class="text-sm text-center mt-8">Une fois soumis, vous verrez les pronostics des autres joueurs ayant déjà joué.</p>';
   }
 }
@@ -649,7 +710,8 @@ async function soumettre(j) {
     const soumissions = existing.soumissions || {};
     const statuts     = existing.statuts     || {};
     soumissions[APP.joueurActif.id] = pronostics;
-    statuts[APP.joueurActif.id]     = { soumisAt: Date.now(), complets };
+    const aJoker = APP.joueurActif.joker?.journee === j;
+    statuts[APP.joueurActif.id]     = { soumisAt: Date.now(), complets, joker: aJoker };
     await ref.set({ ...existing, soumissions, statuts }, { merge: true });
     showToast(`✅ ${APP.joueurActif.nom} — pronostics soumis !`, 'success');
   } catch(e) { console.error(e); showToast('Erreur soumission. Réessayez.', 'error'); }
@@ -701,11 +763,13 @@ async function soumettreTardif(j) {
     const statuts     = existing.statuts     || {};
 
     soumissions[APP.joueurActif.id] = pronostics;
+    const aJokerT = APP.joueurActif.joker?.journee === j;
     statuts[APP.joueurActif.id]     = {
       soumisAt:  now,
       complets,
       tardif:    true,
       penalite:  CONFIG.regles.penaliteRetard,
+      joker:     aJokerT,
     };
 
     await ref.set({ ...existing, soumissions, statuts }, { merge: true });
@@ -969,6 +1033,14 @@ function renderResultats(j, data) {
     }
   });
 
+  // Appliquer le joker (×2)
+  APP.joueurs.forEach(jo => {
+    const statut = data.statuts?.[jo.id];
+    if (statut?.joker === true) {
+      totaux[jo.id] = totaux[jo.id] * 2;
+    }
+  });
+
   // Appliquer points par défaut aux non-soumis (si tous les scores sont entrés)
   const tousScores2 = matchs.length > 0 && matchs.every(m => m.scoreReel !== null);
   if (tousScores2) {
@@ -1019,7 +1091,9 @@ function renderResultats(j, data) {
     tousJoueursTriees.forEach((jo, i) => {
       const pts       = totaux[jo.id] || 0;
       const aSoumis   = !!soumissions[jo.id];
-      const estTardif = data.statuts?.[jo.id]?.tardif === true;
+      const statJo    = data.statuts?.[jo.id];
+      const estTardif = statJo?.tardif === true;
+      const estJoker  = statJo?.joker  === true;
       const rang      = (pts !== ptsPrecedents) ? i + 1 : rangCourant;
       rangCourant = rang; ptsPrecedents = pts;
 
@@ -1035,7 +1109,8 @@ function renderResultats(j, data) {
       // Sous-label pour non-soumis ou tardif
       const subLabel = !aSoumis
         ? (tousScores2 ? '<br><small style="color:var(--gris)">par défaut</small>' : '')
-        : (estTardif ? '<br><small style="color:var(--or)">⚠️ tardif</small>' : '');
+        : ((estTardif ? '<br><small style="color:var(--or)">⚠️ tardif</small>' : '')
+          + (estJoker  ? '<br><small style="color:var(--or)">🃏 joker ×2</small>' : ''));
 
       html += '<div class="classement-row' + (isMe ? ' moi' : '') + '"'
         + (!aSoumis && !tousScores2 ? ' style="opacity:0.45"' : '') + '>'
@@ -1193,9 +1268,10 @@ function chargerClassementSaison() {
   )).then(async snaps => {
     const totaux = Object.fromEntries(APP.joueurs.map(jo => [jo.id, { pts: 0, gains: 0 }]));
 
-    snaps.forEach(snap => {
+    snaps.forEach((snap, snapIdx) => {
       if (!snap.exists) return;
       const snapData = snap.data();
+      snapData._journeeNum = snapIdx + 1; // numéro de journée (1-based)
       const matchs   = snapData.matchs || [];
       let soumissions = snapData.soumissions || {};
       if (Object.keys(soumissions).length === 0) {
@@ -1215,6 +1291,18 @@ function chargerClassementSaison() {
       APP.joueurs.forEach(jo => {
         const st = statuts[jo.id];
         if (st?.tardif && st?.penalite) ptsJ[jo.id] = Math.max(0, ptsJ[jo.id] + st.penalite);
+        // Joker : doubler les points de la journée
+        if (st?.joker === true) {
+          const base = ptsJ[jo.id];
+          ptsJ[jo.id] = base * 2;
+          // Stocker le détail du joker pour l'affichage
+          if (!totaux[jo.id].jokerDetail) {
+            totaux[jo.id].jokerDetail = { journee: 0, ptsBase: 0, ptsDouble: 0 };
+          }
+          totaux[jo.id].jokerDetail.ptsBase   = base;
+          totaux[jo.id].jokerDetail.ptsDouble  = ptsJ[jo.id];
+          totaux[jo.id].jokerDetail.journee    = snapData._journeeNum || 0;
+        }
       });
 
       if (tousScores) {
@@ -1379,12 +1467,14 @@ function chargerClassementSaison() {
       const hasDet   = Object.keys(det).length > 0;
 
       html += '<div class="classement-row' + (isMe ? ' moi' : '') + '"'
-        + ' style="cursor:' + (avecBonus && hasDet ? 'pointer' : 'default') + '"'
-        + (avecBonus && hasDet ? ' data-bonus-id="' + jo.id + '"  onclick="toggleBonusDetail(this.dataset.bonusId)"' : '')
+        + ' style="cursor:' + ((avecBonus && hasDet) || totaux[jo.id].jokerDetail ? 'pointer' : 'default') + '"'
+        + (avecBonus && hasDet ? ' data-bonus-id="' + jo.id + '"  onclick="toggleBonusDetail(this.dataset.bonusId)"' : '') + ((avecBonus && hasDet) || totaux[jo.id].jokerDetail ? '' : '')
         + '>'
         + '<div class="rang-badge ' + (rang<=3?'rang-'+rang:'rang-other') + '">'
         + (rang<=3?['🥇','🥈','🥉'][i]:rang) + '</div>'
         + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom
+        + (totaux[jo.id].jokerDetail ? ' <span title="Joker J' + totaux[jo.id].jokerDetail.journee
+            + '" style="font-size:12px">🃏</span>' : '')
         + (avecBonus && hasDet ? ' <span style="font-size:10px;color:var(--or)">▸</span>' : '')
         + '</div>';
 
@@ -1404,29 +1494,47 @@ function chargerClassementSaison() {
       html += '</div>';
 
       // Détail bonus (masqué par défaut, toggle au clic)
-      if (avecBonus && hasDet) {
+      // Panneau dépliable : bonus ET joker
+      const jokerDet = totaux[jo.id].jokerDetail;
+      const hasPanel = (avecBonus && hasDet) || jokerDet;
+      if (hasPanel) {
         const detLabels = {
-          champion:    "Champion",
-          top3Ordre:   "Top 3 dans l'ordre",
-          top2sur3:    "2 équipes sur 3",
-          flop3Ordre:  "Flop 3 dans l'ordre",
-          flop2sur3:   "2 relégués sur 3",
-          buteur:      "Meilleur buteur",
-          nbuts:       "Nombre de buts exact",
+          champion:   "Champion",
+          top3Ordre:  "Top 3 dans l'ordre",
+          top2sur3:   "2 équipes sur 3",
+          flop3Ordre: "Flop 3 dans l'ordre",
+          flop2sur3:  "2 relégués sur 3",
+          buteur:     "Meilleur buteur",
+          nbuts:      "Nombre de buts exact",
         };
         let detHtml = '<div id="bonus-det-' + jo.id + '" style="display:none;'
           + 'background:var(--or-l);border-radius:8px;padding:8px 12px;'
           + 'margin:-6px 8px 6px 8px;font-size:12px">';
-        Object.entries(det).forEach(([k, v]) => {
-          detHtml += '<div style="display:flex;justify-content:space-between;padding:2px 0">'
-            + '<span>🎯 ' + (detLabels[k] || k) + '</span>'
-            + '<span style="font-weight:600;color:var(--or)">+' + v + ' pts</span></div>';
-        });
-        detHtml += '<div style="border-top:1px solid var(--or);margin-top:4px;padding-top:4px;'
-          + 'display:flex;justify-content:space-between;font-weight:600">'
-          + '<span>Total bonus</span>'
-          + '<span style="color:var(--or)">+' + Object.values(det).reduce((a,b)=>a+b,0) + ' pts</span>'
-          + '</div></div>';
+
+        // Ligne joker
+        if (jokerDet) {
+          detHtml += '<div style="display:flex;justify-content:space-between;padding:3px 0;'
+            + 'border-bottom:1px dashed var(--or);margin-bottom:4px">'
+            + '<span>🃏 Joker J' + jokerDet.journee + ' (×2)</span>'
+            + '<span style="font-weight:600;color:var(--or)">'
+            + jokerDet.ptsBase + ' → ' + jokerDet.ptsDouble + ' pts</span></div>';
+        }
+
+        // Lignes bonus
+        if (avecBonus && hasDet) {
+          Object.entries(det).forEach(([k, v]) => {
+            detHtml += '<div style="display:flex;justify-content:space-between;padding:2px 0">'
+              + '<span>🎯 ' + (detLabels[k] || k) + '</span>'
+              + '<span style="font-weight:600;color:var(--or)">+' + v + ' pts</span></div>';
+          });
+          detHtml += '<div style="border-top:1px solid var(--or);margin-top:4px;padding-top:4px;'
+            + 'display:flex;justify-content:space-between;font-weight:600">'
+            + '<span>Total bonus</span>'
+            + '<span style="color:var(--or)">+' + Object.values(det).reduce((a,b)=>a+b,0) + ' pts</span>'
+            + '</div>';
+        }
+
+        detHtml += '</div>';
         html += detHtml;
       }
     });
@@ -1585,7 +1693,7 @@ function renderBonus(data,monId) {
 
   // TOP 3
   html += '<div style="margin-bottom:16px">';
-  html += secHdr("&#127942;", "Podium - Top 3", "jusqu'a 50 pts",
+  html += secHdr("&#127942;", "Podium - Top 3", "jusqu'à 50 pts",
                  "var(--color-background-warning)", "var(--color-text-warning)");
   html += '<div style="display:grid;grid-template-columns:28px 1fr;gap:8px;' +
           'align-items:center;margin-bottom:8px">';
@@ -1601,7 +1709,7 @@ function renderBonus(data,monId) {
 
   // FLOP 3
   html += '<div style="margin-bottom:16px">';
-  html += secHdr("&#128308;", "Relegation - Flop 3", "jusqu'a 25 pts",
+  html += secHdr("&#128308;", "Relegation - Flop 3", "jusqu'à 25 pts",
                  "var(--color-background-danger)", "var(--color-text-danger)");
   html += '<div style="display:flex;flex-direction:column;gap:8px">';
   html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
@@ -1614,7 +1722,7 @@ function renderBonus(data,monId) {
 
   // BUTEUR
   html += '<div style="margin-bottom:16px">';
-  html += secHdr("&#9917;", "Meilleur buteur", "jusqu'a 25 pts",
+  html += secHdr("&#9917;", "Meilleur buteur", "jusqu'à 25 pts",
                  "var(--color-background-info)", "var(--color-text-info)");
   html += '<div style="display:grid;grid-template-columns:1fr 80px;gap:8px;align-items:end">';
   html += '<div style="display:flex;flex-direction:column;gap:2px">';
@@ -1975,25 +2083,32 @@ async function rafraichirScoresESPN(j) {
     }
 
     // Normaliser un nom d'équipe pour comparaison
-    const norm = s => (s || '').toLowerCase().normalize('NFD')
-      .replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9 ]/g,' ').trim();
+    const ALIAS_ESPN = {
+      'rennes':              'stade rennais',
+      'stade rennais':       'rennes',
+      'paris sg':            'paris saint germain',
+      'paris saint-germain': 'paris saint germain',
+    };
+    const normTeam = s => {
+      const n = (s || '').toLowerCase().normalize('NFD')
+        .replace(/̀-ͯ/g,'').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+      return ALIAS_ESPN[n] || n;
+    };
+    const teamsMatch = (a, b) => {
+      const na = normTeam(a), nb = normTeam(b);
+      if (na === nb || na.includes(nb) || nb.includes(na)) return true;
+      const wa = na.split(' ').filter(w => w.length > 2);
+      const wb = nb.split(' ').filter(w => w.length > 2);
+      return wa.some(w => wb.some(w2 => w.includes(w2) || w2.includes(w)));
+    };
 
-    // Mapper les scores ESPN sur les matchs Firebase
     let mises_a_jour = 0;
     const matchsUpdated = matchs.map(match => {
-      const normDom = norm(match.domicile);
-      const normExt = norm(match.exterieur);
-
       const espnEvent = events.find(ev => {
         const teams = ev.competitions?.[0]?.competitors || [];
-        const h = norm(teams[0]?.team?.displayName);
-        const a = norm(teams[1]?.team?.displayName);
-        // Correspondance si au moins un mot significatif correspond
-        const domMatch = h.split(' ').some(w => w.length > 2 && normDom.includes(w))
-                      || normDom.split(' ').some(w => w.length > 2 && h.includes(w));
-        const extMatch = a.split(' ').some(w => w.length > 2 && normExt.includes(w))
-                      || normExt.split(' ').some(w => w.length > 2 && a.includes(w));
-        return domMatch && extMatch;
+        const h = teams[0]?.team?.displayName || '';
+        const a = teams[1]?.team?.displayName || '';
+        return teamsMatch(match.domicile, h) && teamsMatch(match.exterieur, a);
       });
 
       if (!espnEvent) return match;
@@ -2030,7 +2145,7 @@ async function rafraichirScoresESPN(j) {
 
     const msg = mises_a_jour > 0
       ? `✅ ${mises_a_jour} score(s) mis à jour`
-      : '⚠️ Aucun score disponible pour l&#39;instant';
+      : '⚠️ Aucun score disponible pour l\'instant';
     showToast(msg, mises_a_jour > 0 ? 'success' : 'warning');
     chargerTab('resultats');
 
@@ -2044,3 +2159,82 @@ async function rafraichirScoresESPN(j) {
 }
 
 
+
+// ── Joker ──────────────────────────────────────────────────────
+// Vérifier si le joueur a déjà utilisé son joker cette saison
+async function verifierJoker(joueurId) {
+  const snap = await APP.db.collection('config').doc('joueurs').get();
+  if (!snap.exists) return null;
+  const liste = snap.data().liste || [];
+  const jo = liste.find(j => j.id === joueurId);
+  return jo?.joker || null; // { journee, utiliseA }
+}
+
+// Poser le joker (avant soumission)
+async function poserJoker(numJournee) {
+  if (!APP.joueurActif) return;
+  const jokerExistant = await verifierJoker(APP.joueurActif.id);
+  if (jokerExistant) {
+    showToast('Joker déjà utilisé à la J' + jokerExistant.journee, 'error');
+    return;
+  }
+  if (!confirm('🃏 Activer votre joker sur la Journée ' + numJournee + ' ?\n'
+    + 'Vos points seront x2 sur cette journée.\n'
+    + '⚠️ Non annulable une fois soumis.')) return;
+
+  try {
+    // Marquer le joker dans config/joueurs
+    const snap = await APP.db.collection('config').doc('joueurs').get();
+    const liste = snap.data().liste || [];
+    const idx   = liste.findIndex(j => j.id === APP.joueurActif.id);
+    if (idx < 0) { showToast('Joueur non trouvé', 'error'); return; }
+    liste[idx].joker = { journee: numJournee, utiliseA: Date.now() };
+    await APP.db.collection('config').doc('joueurs').set({ liste }, { merge: true });
+    APP.joueurActif.joker = liste[idx].joker;
+    showToast('🃏 Joker activé pour la J' + numJournee + ' !', 'success');
+    chargerTab('grille');
+  } catch(e) {
+    console.error(e);
+    showToast('Erreur joker', 'error');
+  }
+}
+
+// Annuler le joker (avant soumission uniquement)
+async function annulerJoker() {
+  if (!APP.joueurActif || !confirm('Annuler votre joker ?')) return;
+  try {
+    const snap = await APP.db.collection('config').doc('joueurs').get();
+    const liste = snap.data().liste || [];
+    const idx   = liste.findIndex(j => j.id === APP.joueurActif.id);
+    if (idx >= 0) {
+      delete liste[idx].joker;
+      await APP.db.collection('config').doc('joueurs').set({ liste }, { merge: true });
+      delete APP.joueurActif.joker;
+      showToast('Joker annulé', 'default');
+      chargerTab('grille');
+    }
+  } catch(e) { showToast('Erreur annulation joker', 'error'); }
+}
+
+// Clôture d'une saison choisie via le sélecteur admin
+async function confirmerClotureSaisonSelectionnee() {
+  const sel   = document.getElementById('admin-select-cloture');
+  const key   = sel ? sel.value : saisonKey(CONFIG.saison);
+  const label = saisonLabel(key);
+
+  if (!confirm('Cloture definitive : ' + label + ' ?\n'
+    + 'Le palmares sera fige. Action irreversible.')) return;
+
+  try {
+    showToast('Calcul du palmares...', 'default');
+    const avant = APP.saisonAffichee;
+    APP.saisonAffichee = key;
+    await cloturerSaison();
+    APP.saisonAffichee = avant;
+    showToast('Saison ' + label + ' cloturee !', 'success');
+    chargerPalmares();
+  } catch(e) {
+    console.error(e);
+    showToast('Erreur cloture', 'error');
+  }
+}
