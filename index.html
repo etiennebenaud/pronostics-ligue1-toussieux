@@ -7,8 +7,8 @@
   <meta name="description" content="Pronostics Ligue 1 - Application de pronostics pour amis">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Pronostics L1">
-  <title>⚽ Pronostics L1</title>
+  <meta name="apple-mobile-web-app-title" id="meta-app-title" content="Pronostics L1">
+  <title id="page-title">⚽ Pronostics L1</title>
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="assets/icon-192.png">
   <link rel="stylesheet" href="css/style.css?v=202605102019">
@@ -37,7 +37,7 @@
         </div>
         <div class="header-titles">
           <h1>Pronostics L1</h1>
-          <div class="subtitle">Toussi'Potes · <span id="header-saison">2026/2027</span></div>
+          <div class="subtitle"><span id="app-subtitle">Toussi'Pronos</span> · <span id="header-saison">2026/2027</span></div>
         </div>
       </div>
       <div class="header-journee-badge" id="header-journee-badge">J.1</div>
@@ -48,7 +48,7 @@
   <div id="section-login" style="display:none">
     <div class="login-card">
       <div class="login-logo">⚽</div>
-      <div class="login-title">Pronostics L1</div>
+      <div class="login-title" id="login-title">Pronostics L1</div>
       <div class="login-sub">Entrez votre code pour accéder à l'application</div>
       <form id="login-form" onsubmit="return false">
         <label class="login-label" for="login-input">Votre code :</label>
@@ -151,11 +151,11 @@
 <!-- Scripts -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-<script src="config.js?v=202605100712"></script>
+<script src="config.js?v=202605182006"></script>
 <script src="js/joueurs.js?v=202605100556"></script>
 <script src="js/saisons.js?v=202605100636"></script>
 <script src="js/calendrier.js?v=202605100607"></script>
-<script src="js/app.js?v=202605102019"></script>
+<script src="js/app.js?v=202605182006"></script>
 
 <script>
   document.getElementById('app-header').style.display = 'block';
