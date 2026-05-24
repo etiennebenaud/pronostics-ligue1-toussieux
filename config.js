@@ -87,7 +87,7 @@ const CONFIG = {
     couleurPrimaire:   "#E8500A",
     couleurSecondaire: "#1F4E79",
     couleurVert:       "#1A7A3A",
-    nomApp:            "Pronostics L1",
-    descriptionApp:    "Toussi'Potes · Ligue 1 2026/2027",
+    nomApp:            "Toussi'Pronos",
+    descriptionApp:    "Toussi\'Pronos · Ligue 1 2026/2027",
   },
 };
