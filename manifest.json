@@ -1,6 +1,6 @@
 {
-  "name": "Pronostics Ligue 1",
-  "short_name": "Pronostics L1",
+  "name": "Toussi'Pronos — Pronostics Ligue 1",
+  "short_name": "Toussi'Pronos",
   "description": "Application de pronostics Ligue 1 entre amis",
   "start_url": "/",
   "display": "standalone",
@@ -21,6 +21,9 @@
       "purpose": "any maskable"
     }
   ],
-  "categories": ["games", "sports"],
+  "categories": [
+    "games",
+    "sports"
+  ],
   "lang": "fr"
 }
