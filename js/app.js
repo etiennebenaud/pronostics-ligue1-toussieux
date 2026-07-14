@@ -6,6 +6,7 @@ const APP = {
   db: null, joueurActif: null, joueurs: [],
   estAdmin: false, journeeActive: 1,
   ecouteurs: [], deferredInstall: null,
+  autoRefreshTimer: null, // interval auto-refresh ESPN
   saisonAffichee: null,  // null = saison courante
   listeSaisons: [],
   saisonEstCloturee: false, // true si la saison affichée est clôturée
@@ -198,6 +199,11 @@ async function demarrerApp() {
 
 function deconnexion() {
   APP.ecouteurs.forEach(fn => fn()); APP.ecouteurs = [];
+  // Arrêter l'auto-refresh ESPN si on quitte Résultats
+  if (APP.autoRefreshTimer) {
+    clearInterval(APP.autoRefreshTimer);
+    APP.autoRefreshTimer = null;
+  }
   APP.joueurActif = null; APP.estAdmin = false; APP.joueurs = [];
   localStorage.removeItem('pronostics_joueur_id');
   localStorage.removeItem('pronostics_admin');
@@ -209,6 +215,11 @@ function chargerTab(tabId) {
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tabId));
   document.querySelectorAll('.tab-content').forEach(s => s.classList.toggle('active', s.id === 'tab-' + tabId));
   APP.ecouteurs.forEach(fn => fn()); APP.ecouteurs = [];
+  // Arrêter l'auto-refresh ESPN si on quitte Résultats
+  if (APP.autoRefreshTimer) {
+    clearInterval(APP.autoRefreshTimer);
+    APP.autoRefreshTimer = null;
+  }
   const fns = { grille: chargerGrille, resultats: chargerResultats, classement: chargerClassement,
                 bonus: chargerBonus, profil: chargerProfil, admin: chargerAdmin, palmares: chargerPalmares };
   fns[tabId]?.();
@@ -831,8 +842,14 @@ function chargerResultats() {
     + '</div>'
     + '<div id="resultats-content"><div class="loading"><div class="spinner"></div></div></div>'
     + '</div>';
-  const unsub = dbSaison('journees', `j${APP.journeeActive}`)
-    .onSnapshot(snap => renderResultats(APP.journeeActive, snap.exists ? snap.data() : {}));
+  const jActive = APP.journeeActive;
+  const unsub = dbSaison('journees', `j${jActive}`)
+    .onSnapshot(snap => {
+      const data = snap.exists ? snap.data() : {};
+      renderResultats(jActive, data);
+      // Démarrer ou arrêter l'auto-refresh selon si des matchs sont en cours
+      gererAutoRefreshESPN(jActive, data);
+    });
   APP.ecouteurs.push(unsub);
 }
 
@@ -2045,9 +2062,54 @@ function sauverDelaiReouverture(val) {
 }
 
 // ── Rafraîchir les scores depuis ESPN ────────────────────────
-async function rafraichirScoresESPN(j) {
+
+// ── Auto-refresh ESPN quand des matchs sont en cours ─────────
+function gererAutoRefreshESPN(j, data) {
+  const matchs  = data.matchs || [];
+  const now     = Date.now();
+
+  // Détecter si des matchs sont en cours ou vont démarrer dans moins d'1h
+  const enCours  = matchs.some(m => m.scoreEnCours === true);
+  const bientot  = matchs.some(m => m.timestamp && m.timestamp > now && m.timestamp - now < 3600000);
+  const aDejaCommence = matchs.some(m =>
+    m.timestamp && m.timestamp <= now && (!m.scoreReel || m.scoreEnCours)
+  );
+
+  const doitAutoRefresh = enCours || aDejaCommence || bientot;
+
+  if (doitAutoRefresh && !APP.autoRefreshTimer) {
+    // Lancer un refresh immédiat silencieux puis toutes les 60 secondes
+    console.log('Auto-refresh ESPN activé pour J' + j);
+    rafraichirScoresESPN(j, true); // true = mode silencieux
+    APP.autoRefreshTimer = setInterval(() => {
+      // Vérifier qu'on est encore sur l'onglet Résultats et la même journée
+      if (APP.journeeActive !== j) {
+        clearInterval(APP.autoRefreshTimer);
+        APP.autoRefreshTimer = null;
+        return;
+      }
+      rafraichirScoresESPN(j, true);
+    }, 60000); // toutes les 60 secondes
+
+    // Mettre à jour l'indicateur dans le bouton
+    const btn = document.getElementById('btn-refresh-scores');
+    if (btn) {
+      btn.innerHTML = '⚽ Rafraîchir les scores'
+        + ' <span id="live-badge" style="background:rgba(255,255,255,0.25);'
+        + 'border-radius:6px;padding:2px 6px;font-size:11px">🔴 EN DIRECT</span>';
+    }
+
+  } else if (!doitAutoRefresh && APP.autoRefreshTimer) {
+    // Plus de matchs en cours → arrêter
+    clearInterval(APP.autoRefreshTimer);
+    APP.autoRefreshTimer = null;
+    console.log('Auto-refresh ESPN arrêté — plus de matchs en cours');
+  }
+}
+
+async function rafraichirScoresESPN(j, silencieux) {
   const btn = document.getElementById('btn-refresh-scores');
-  if (btn) {
+  if (!silencieux && btn) {
     btn.innerHTML = '<div class="ball-wrap" style="width:20px;height:20px;display:inline-block;vertical-align:middle;margin-right:6px"></div>Chargement...';
     btn.disabled = true;
   }
@@ -2151,18 +2213,23 @@ async function rafraichirScoresESPN(j) {
 
     await dbSaison('journees', `j${j}`).set({ ...data, matchs: matchsUpdated }, { merge: false });
 
-    const msg = mises_a_jour > 0
-      ? `✅ ${mises_a_jour} score(s) mis à jour`
-      : '⚠️ Aucun score disponible pour l\'instant';
-    showToast(msg, mises_a_jour > 0 ? 'success' : 'warning');
-    chargerTab('resultats');
+    if (!silencieux) {
+      const msg = mises_a_jour > 0
+        ? `✅ ${mises_a_jour} score(s) mis à jour`
+        : '⚠️ Aucun score disponible pour l\'instant';
+      showToast(msg, mises_a_jour > 0 ? 'success' : 'warning');
+      chargerTab('resultats');
+    }
+    // En mode silencieux, Firebase onSnapshot se charge de re-rendre automatiquement
 
   } catch(e) {
     console.error('rafraichirScoresESPN:', e);
     showToast('Erreur ESPN : ' + e.message, 'error');
   } finally {
-    const btn2 = document.getElementById('btn-refresh-scores');
-    if (btn2) { btn2.innerHTML = '⚽ Rafraîchir les scores'; btn2.disabled = false; }
+    if (!silencieux) {
+      const btn2 = document.getElementById('btn-refresh-scores');
+      if (btn2) { btn2.innerHTML = '⚽ Rafraîchir les scores'; btn2.disabled = false; }
+    }
   }
 }
 
