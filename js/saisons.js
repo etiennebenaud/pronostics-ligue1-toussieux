@@ -58,7 +58,8 @@ async function initialiserSaison(key) {
 
 // ── Clôturer la saison courante ───────────────────────────
 async function cloturerSaison() {
-  const key = saisonKey(CONFIG.saison);
+  // Utiliser la saison affichée si différente de la courante (clôture d'une saison sélectionnée)
+  const key = APP.saisonAffichee || saisonKey(CONFIG.saison);
 
   // Calculer le palmarès final
   const palmares = await calculerPalmaresFinSaison(key);
@@ -135,7 +136,7 @@ async function chargerPalmares() {
               ${estCour ? '🟢' : '📁'} Saison ${label}
             </div>
             <span class="badge ${cloturee?'badge-bleu':estCour?'badge-vert':'badge-orange'}">
-              ${cloturee ? 'Clôturée' : 'En cours'}
+              ${cloturee ? 'Clôturée' : estCour ? 'En cours' : 'Terminée'}
             </span>
             ${estAffichee ? '<span class="badge badge-orange" style="margin-left:4px">Affichée</span>' : ''}
           </div>
