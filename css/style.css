@@ -765,3 +765,8 @@ body {
   width: 18px; height: 24px;
   display: inline-flex; align-items: center;
 }
+
+/* ── Transition inputs score (surlignage validation) ─────── */
+.score-input {
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
