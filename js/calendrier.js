@@ -83,7 +83,7 @@ async function fetchJourneeAPI(numJournee, saisonLabel, tentative = 1) {
       exterieur: e.strAwayTeam  || '',
       date:      formaterDate(e.dateEvent, e.strTime),
       timestamp: e.dateEvent && e.strTime
-                   ? new Date(`${e.dateEvent}T${e.strTime}`).getTime()
+                   ? new Date(`${e.dateEvent}T${e.strTime}Z`).getTime()  // Z = UTC (TheSportsDB donne l'heure en UTC)
                    : null,
       scoreReel: (e.intHomeScore !== null && e.intAwayScore !== null &&
                   e.intHomeScore !== '' && e.intAwayScore !== '')
@@ -108,7 +108,7 @@ async function fetchJourneeAPI(numJournee, saisonLabel, tentative = 1) {
 function formaterDate(dateStr, timeStr) {
   if (!dateStr) return '';
   try {
-    const d = new Date(`${dateStr}T${timeStr || '00:00:00'}`);
+    const d = new Date(`${dateStr}T${timeStr || '00:00:00'}Z`); // Z = UTC → converti en heure locale auto
     const jours = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
     const j = jours[d.getDay()];
     const dd = String(d.getDate()).padStart(2,'0');
