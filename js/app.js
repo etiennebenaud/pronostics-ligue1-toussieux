@@ -171,10 +171,32 @@ async function demarrerApp() {
     banner.innerHTML = jo
       ? `<div class="user-avatar">${jo.emoji}</div>
          <div class="user-info"><div class="user-name">${jo.nom}</div><div class="user-team">${jo.equipe||''}</div></div>
-         <button class="btn-logout" onclick="deconnexion()">Se déconnecter</button>`
+         <div style="display:flex;gap:8px;align-items:center;margin-left:auto">
+           <a href="regles_toussipronos.pdf" target="_blank"
+             style="display:flex;align-items:center;gap:5px;font-size:12px;font-weight:500;
+                    color:rgba(255,255,255,0.75);text-decoration:none;padding:6px 10px;
+                    background:rgba(255,255,255,0.1);border-radius:8px;
+                    border:1px solid rgba(255,255,255,0.15);transition:all .2s;white-space:nowrap"
+             onmouseover="this.style.background='rgba(255,255,255,0.18)'"
+             onmouseout="this.style.background='rgba(255,255,255,0.1)'">
+             📖 Règles
+           </a>
+           <button class="btn-logout" onclick="deconnexion()">Se déconnecter</button>
+         </div>`
       : `<div class="user-avatar">🔧</div>
          <div class="user-info"><div class="user-name">Administrateur</div><div class="user-team">Mode admin</div></div>
-         <button class="btn-logout" onclick="deconnexion()">Se déconnecter</button>`;
+         <div style="display:flex;gap:8px;align-items:center;margin-left:auto">
+           <a href="regles_toussipronos.pdf" target="_blank"
+             style="display:flex;align-items:center;gap:5px;font-size:12px;font-weight:500;
+                    color:rgba(255,255,255,0.75);text-decoration:none;padding:6px 10px;
+                    background:rgba(255,255,255,0.1);border-radius:8px;
+                    border:1px solid rgba(255,255,255,0.15);transition:all .2s;white-space:nowrap"
+             onmouseover="this.style.background='rgba(255,255,255,0.18)'"
+             onmouseout="this.style.background='rgba(255,255,255,0.1)'">
+             📖 Règles
+           </a>
+           <button class="btn-logout" onclick="deconnexion()">Se déconnecter</button>
+         </div>`;
   }
   APP.journeeActive  = CONFIG.regles.journeeDefaut > 0 ? CONFIG.regles.journeeDefaut : 1;
   APP.saisonAffichee = saisonKey(CONFIG.saison);
@@ -1397,16 +1419,20 @@ function chargerClassementSaison() {
           const topProno = [b.champion, b.top2, b.top3];
           const matchesTop = topProno.map((t, i) => t && top3Reel[i] && matchNom(t, top3Reel[i]));
           const nbMatchTop = matchesTop.filter(Boolean).length;
+          // Compter aussi les équipes dans le désordre
+          const inTopDesordre = topProno.filter(t => t && top3Reel.some(r => matchNom(t, r))).length;
           if (nbMatchTop === 3 && !det.champion) {
+            // Top 3 dans l'ordre exact
             det.top3Ordre = CONFIG.bonusSaison.top3Ordre;
             totaux[jo.id].pts += CONFIG.bonusSaison.top3Ordre;
-          } else if (nbMatchTop >= 2) {
-            // Top 2 sur 3 ou désordre
-            const inTop = topProno.filter(t => t && top3Reel.some(r => matchNom(t, r))).length;
-            if (inTop >= 2) {
-              det.top2sur3 = CONFIG.bonusSaison.top2sur3;
-              totaux[jo.id].pts += CONFIG.bonusSaison.top2sur3;
-            }
+          } else if (inTopDesordre === 3) {
+            // Les 3 équipes sont là mais dans le désordre
+            det.top3Desordre = CONFIG.bonusSaison.top3Desordre;
+            totaux[jo.id].pts += CONFIG.bonusSaison.top3Desordre;
+          } else if (inTopDesordre >= 2) {
+            // 2 équipes sur 3 trouvées
+            det.top2sur3 = CONFIG.bonusSaison.top2sur3;
+            totaux[jo.id].pts += CONFIG.bonusSaison.top2sur3;
           }
 
           // Flop 3
