@@ -52,8 +52,13 @@ function saisonApiFormat(s) {
 
 // ── Charger une journée depuis l'API ────────────────────────
 async function fetchJourneeAPI(numJournee, saisonLabel, tentative = 1) {
+  // Essayer ESPN en premier (plus complet), TheSportsDB en fallback
+  if (tentative <= 2) {
+    const result = await fetchJourneeAPIEspn(numJournee, saisonLabel);
+    if (result && result.length > 0) return result;
+  }
+  // Fallback TheSportsDB
   const saison = saisonApiFormat(saisonLabel || CONFIG.saison);
-  // Essayer sans www d'abord, puis avec www en fallback
   const urls = [
     `https://www.thesportsdb.com/api/v1/json/3/eventsround.php?id=${SPORTSDB_LEAGUE}&r=${numJournee}&s=${saison}`,
     `https://thesportsdb.com/api/v1/json/3/eventsround.php?id=${SPORTSDB_LEAGUE}&r=${numJournee}&s=${saison}`,
@@ -62,40 +67,20 @@ async function fetchJourneeAPI(numJournee, saisonLabel, tentative = 1) {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
-    const resp = await fetch(url, {
-      method: 'GET',
-      headers: { 'Accept': 'application/json' },
-      mode: 'cors',
-      signal: controller.signal,
-    });
+    const resp = await fetch(url, { headers: { 'Accept': 'application/json' }, mode: 'cors', signal: controller.signal });
     clearTimeout(timeoutId);
-    if (!resp.ok) {
-      if (resp.status === 429 && tentative <= 3) {
-        console.warn(`Rate limit J${numJournee}, retry ${tentative}/3...`);
-        await new Promise(r => setTimeout(r, 2000 * tentative));
-        return fetchJourneeAPI(numJournee, saisonLabel, tentative + 1);
-      }
-      throw new Error(`HTTP ${resp.status}`);
-    }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     return (data.events || []).map(e => ({
-      domicile:  e.strHomeTeam  || '',
-      exterieur: e.strAwayTeam  || '',
+      domicile:  e.strHomeTeam || '',
+      exterieur: e.strAwayTeam || '',
       date:      formaterDate(e.dateEvent, e.strTime),
-      timestamp: e.dateEvent && e.strTime
-                   ? new Date(`${e.dateEvent}T${e.strTime}Z`).getTime()  // Z = UTC (TheSportsDB donne l'heure en UTC)
-                   : null,
-      scoreReel: (e.intHomeScore !== null && e.intAwayScore !== null &&
-                  e.intHomeScore !== '' && e.intAwayScore !== '')
-                   ? { dom: parseInt(e.intHomeScore), ext: parseInt(e.intAwayScore) }
-                   : null,
+      timestamp: e.dateEvent && e.strTime ? new Date(`${e.dateEvent}T${e.strTime}Z`).getTime() : null,
+      scoreReel: (e.intHomeScore !== null && e.intHomeScore !== '') ? { dom: parseInt(e.intHomeScore), ext: parseInt(e.intAwayScore) } : null,
       idApi: e.idEvent || null,
     }));
   } catch(e) {
-    const isAbort = e.name === 'AbortError';
-    const msg = isAbort ? 'Timeout 8s' : e.message;
-    console.warn(`fetchJourneeAPI J${numJournee} (tentative ${tentative}): ${msg}`);
-    // Retry automatique avec l'autre URL si encore des tentatives
+    console.warn(`fetchJourneeAPI J${numJournee} (tentative ${tentative}): ${e.message}`);
     if (tentative < 3) {
       await new Promise(r => setTimeout(r, 1000 * tentative));
       return fetchJourneeAPI(numJournee, saisonLabel, tentative + 1);
@@ -103,6 +88,95 @@ async function fetchJourneeAPI(numJournee, saisonLabel, tentative = 1) {
     return null;
   }
 }
+
+// ── Charger une journée depuis ESPN (source principale) ───────
+async function fetchJourneeAPIEspn(numJournee, saisonLabel) {
+  // Utilise le cache ESPN si déjà chargé pour cette saison
+  const saisonKey = saisonApiFormat(saisonLabel || CONFIG.saison);
+  if (window._espnCalCache && window._espnCalCache.saison === saisonKey) {
+    return window._espnCalCache.journees[numJournee] || [];
+  }
+  // Charger toute la saison ESPN en une requête
+  await chargerCacheESPN(saisonKey);
+  return (window._espnCalCache && window._espnCalCache.journees[numJournee]) || [];
+}
+
+// ── Cache ESPN : charge toute la saison en une requête ────────
+async function chargerCacheESPN(saisonKey) {
+  // Déduire les dates de la saison (format "2026-2027")
+  const [anneeDebut, anneeFin] = saisonKey.split('-').map(s => s.slice(0,4));
+  const dateDebut = `${anneeDebut}0801`;
+  const dateFin   = `${anneeFin}0601`;
+  const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard?dates=${dateDebut}-${dateFin}&limit=500`;
+
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`ESPN HTTP ${resp.status}`);
+    const data = await resp.json();
+    const events = (data.events || []).sort((a, b) => a.date.localeCompare(b.date));
+
+    // Grouper en journées (écart > 4 jours = nouvelle journée)
+    const journees = {};
+    let current = [], numJ = 1, prevDate = null;
+
+    for (const ev of events) {
+      const d = new Date(ev.date);
+      if (prevDate && (d - prevDate) > 4 * 86400000) {
+        if (current.length > 0) {
+          journees[numJ] = current.map(e => espnEventToMatch(e));
+          numJ++;
+          current = [];
+        }
+      }
+      current.push(ev);
+      prevDate = d;
+    }
+    if (current.length > 0) {
+      journees[numJ] = current.map(e => espnEventToMatch(e));
+    }
+
+    window._espnCalCache = { saison: saisonKey, journees };
+    console.log(`Cache ESPN chargé : ${Object.keys(journees).length} journées`);
+  } catch(e) {
+    console.warn('chargerCacheESPN:', e);
+    window._espnCalCache = { saison: saisonKey, journees: {} };
+  }
+}
+
+// ── Convertir un event ESPN en format match Firebase ─────────
+function espnEventToMatch(ev) {
+  const comp  = ev.competitions?.[0] || {};
+  const teams = comp.competitors || [];
+  const home  = teams.find(t => t.homeAway === 'home') || teams[0] || {};
+  const away  = teams.find(t => t.homeAway === 'away') || teams[1] || {};
+  const d     = new Date(ev.date);
+  const completed = comp.status?.type?.completed;
+  const scoreH = home.score;
+  const scoreA = away.score;
+
+  return {
+    domicile:  home.team?.displayName || '',
+    exterieur: away.team?.displayName || '',
+    date:      formaterDateFromDate(d),
+    timestamp: d.getTime(),
+    scoreReel: (completed && scoreH !== undefined && scoreH !== null)
+               ? { dom: parseInt(scoreH), ext: parseInt(scoreA) }
+               : null,
+    idApi: ev.id || null,
+  };
+}
+
+// ── Formater une Date JS en affichage lisible ─────────────────
+function formaterDateFromDate(d) {
+  const jours = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
+  const j  = jours[d.getDay()];
+  const dd = String(d.getDate()).padStart(2,'0');
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mn = String(d.getMinutes()).padStart(2,'0');
+  return `${j} ${dd}/${mm} ${hh}h${mn}`;
+}
+
 
 // Formate "2026-08-14" + "20:00:00" → "Ven 14/08 20h00"
 function formaterDate(dateStr, timeStr) {
@@ -127,8 +201,8 @@ async function ouvrirCalendrierAdmin() {
   document.getElementById('modal-body').innerHTML = `
     <div id="cal-body">
       <p class="text-sm text-muted" style="margin-bottom:14px">
-        Charge le calendrier depuis <strong>TheSportsDB</strong> (gratuit, sans clé).<br>
-        Vous pouvez valider journée par journée ou tout valider d'un coup.
+        Charge le calendrier depuis <strong>ESPN</strong> (9 matchs complets).<br>
+        TheSportsDB est utilisé en fallback si ESPN échoue.
       </p>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
@@ -145,7 +219,7 @@ async function ouvrirCalendrierAdmin() {
       </div>
 
       <button class="btn-primary" onclick="lancerChargementCalendrier()" id="btn-charger">
-        🔄 Charger depuis TheSportsDB
+        🔄 Charger depuis ESPN
       </button>
 
       <div id="cal-progress" style="display:none;margin-top:12px">
@@ -226,7 +300,7 @@ async function lancerChargementCalendrier() {
   progressBar.style.width = '100%';
   if (videsConsecutives > 0 && ok > 0) {
     progressLabel.textContent =
-      `✅ ${ok} journée(s) chargées — ${videsConsecutives} vide(s) (fin de saison ou matchs non programmés)`;
+      `✅ ${ok} journée(s) chargées${videsConsecutives > 0 ? ' — ' + videsConsecutives + ' vide(s)' : ''}. Certaines journées peuvent avoir moins de 9 matchs si ESPN n'a pas encore le calendrier complet.`;
   } else {
     progressLabel.textContent = `✅ ${ok} journée(s) chargée(s)`;
   }
@@ -280,7 +354,12 @@ function afficherValidationCalendrier(journees, saisonInput) {
                     margin-bottom:8px;flex-wrap:wrap;gap:6px">
           <div class="card-title" style="margin:0">Journée ${j}</div>
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-            <span class="text-sm text-muted">${matchs.length} matchs</span>
+            <span class="text-sm text-muted">
+              ${matchs.length} matchs
+              ${matchs.length < CONFIG.nbMatchsParJournee
+                ? '<span style="color:var(--or);font-size:11px">⚠️ ' + (CONFIG.nbMatchsParJournee - matchs.length) + ' non trouvé(s) sur ESPN</span>'
+                : ''}
+            </span>
             <button onclick="validerJournee(${j}, ${JSON.stringify(matchs).replace(/"/g,'&quot;')}, '${saisonInput}')"
               class="btn-primary" style="font-size:11px;padding:5px 10px">
               ✅ Valider J${j}
