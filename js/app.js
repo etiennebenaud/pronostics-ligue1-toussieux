@@ -1166,7 +1166,7 @@ function renderResultats(j, data) {
   htmlFrozen += '</tbody></table>';
   htmlScroll += '</tbody></table>';
 
-  const html = `<div class="resultats-table">
+  let html = `<div class="resultats-table">
     ${htmlFrozen}
     <div class="rt-scroll-outer">${htmlScroll}</div>
   </div>`;
