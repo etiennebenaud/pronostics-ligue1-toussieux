@@ -332,47 +332,51 @@ body {
   min-width: 46px; text-align: right;
 }
 
-/* ── Tableau résultats ────────────────────────────────────── */
-/* Tous les joueurs sont toujours affichés, à l'identique. Sur un écran large,
-   tout tient sans scroll. Sur un écran étroit, seuls les premiers joueurs sont
-   visibles et on glisse horizontalement pour voir les suivants — comportement
-   naturel du navigateur, pas de détection JS de la taille d'écran. */
+/* ── Tableau résultats — colonne Match figée, deux tableaux côte à côte ──
+   Technique volontairement SANS position:sticky sur des cellules de tableau :
+   ce combo (sticky + <td>/<th>) est instable sur plusieurs navigateurs
+   (Chrome, Edge, Safari) et provoquait des chevauchements de texte entre
+   colonnes. Ici, deux <table> distincts : un fixe (Match) à gauche, un
+   scrollable (Score + joueurs) à droite. Une hauteur de ligne fixe et
+   identique dans les deux tableaux garantit l'alignement ligne à ligne. */
 .resultats-table {
-  width: 100%; overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
+  display: flex;
+  width: 100%;
 }
 .resultats-table table {
-  /* separate (pas collapse) : position:sticky sur des <td>/<th> avec
-     border-collapse:collapse est un bug connu sur Safari/iOS qui peut faire
-     apparaître le contenu d'une colonne par-dessus la colonne voisine. */
-  border-collapse: separate;
-  border-spacing: 0;
+  border-collapse: collapse;
   font-size: 12px;
 }
+.resultats-table th, .resultats-table td {
+  padding: 0 8px; text-align: center;
+  border-bottom: 1px solid var(--gris-l);
+  white-space: nowrap; box-sizing: border-box;
+  vertical-align: middle;
+}
+/* Hauteurs fixes et identiques dans les deux tableaux : garantit l'alignement
+   même si un côté n'a besoin que d'une ligne quand l'autre en a deux. */
+.resultats-table th { height: 38px; }
+.resultats-table td { height: 46px; }
 .resultats-table th {
   background: var(--bleu); color: var(--blanc);
-  padding: 8px 8px; text-align: center;
   font-size: 11px; font-weight: 700;
   min-width: 46px;
-  position: sticky; top: 0;
-  white-space: nowrap;
-}
-.resultats-table td {
-  padding: 7px 6px; text-align: center;
-  border-bottom: 1px solid var(--gris-l);
-  white-space: nowrap;
 }
 .resultats-table tr:nth-child(even) td { background: #FAFBFC; }
-/* Colonne Match fixe pendant le scroll horizontal, pour toujours savoir
-   de quel match il s'agit même en ayant glissé vers les derniers joueurs. */
-.resultats-table .match-col {
-  text-align: left; font-weight: 600; color: var(--bleu);
-  min-width: 108px; font-size: 11px; white-space: normal;
-  position: sticky; left: 0; z-index: 1;
+
+.rt-frozen { flex-shrink: 0; }
+.rt-scroll-outer {
+  overflow-x: auto; flex: 1; min-width: 0;
+  -webkit-overflow-scrolling: touch;
 }
-.resultats-table th.match-col { z-index: 3; }
+
+.match-col {
+  text-align: left; font-weight: 600; color: var(--bleu);
+  min-width: 108px; font-size: 11px;
+  white-space: normal !important; line-height: 1.25;
+}
 .score-cell { font-weight: 800; color: var(--vert); min-width: 54px; }
-.prono-cell { font-size: 11px; }
+.prono-cell { font-size: 11px; line-height: 1.3; }
 .prono-cell.pts-7 { color: #7B5C00; font-weight: 800; }
 .prono-cell.pts-5 { color: var(--soumis-t); font-weight: 700; }
 .prono-cell.pts-3 { color: var(--bleu); }
