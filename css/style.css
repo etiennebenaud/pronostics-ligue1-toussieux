@@ -342,7 +342,11 @@ body {
   -webkit-overflow-scrolling: touch;
 }
 .resultats-table table {
-  border-collapse: collapse;
+  /* separate (pas collapse) : position:sticky sur des <td>/<th> avec
+     border-collapse:collapse est un bug connu sur Safari/iOS qui peut faire
+     apparaître le contenu d'une colonne par-dessus la colonne voisine. */
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 12px;
 }
 .resultats-table th {
