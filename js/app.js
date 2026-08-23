@@ -1052,9 +1052,11 @@ function renderResultats(j, data) {
   const monIdRes    = APP.joueurActif?.id;
   const joueursOrd  = joueursOrdreResultats();
 
-  let html = `<div class="resultats-table"><table><thead><tr>
+  let htmlFrozen = `<table class="rt-frozen"><thead><tr>
     <th class="match-col">Match</th>
     <th style="min-width:54px">Score</th>
+  </tr></thead><tbody>`;
+  let htmlScroll = `<table class="rt-scroll"><thead><tr>
     ${joueursOrd.map(jo => `<th class="${jo.id===monIdRes?'col-moi':''}" title="${jo.nom}">${jo.emoji}</th>`).join('')}
   </tr></thead><tbody>`;
 
@@ -1104,11 +1106,14 @@ function renderResultats(j, data) {
     }
 
     const bgCellMatch = idx % 2 === 0 ? '#fff' : 'var(--color-background-secondary)';
-    html += `<tr ${bgRow}>
+    htmlFrozen += `<tr ${bgRow}>
       <td class="match-col" style="font-size:11px;background:${bgCellMatch}">
         ${match.domicile||'?'} - ${match.exterieur||'?'}
       </td>
-      <td class="score-cell" style="white-space:nowrap">${scoreHtml}</td>`;
+      <td class="score-cell" style="white-space:nowrap;background:${bgCellMatch}">${scoreHtml}</td>
+    </tr>`;
+
+    htmlScroll += `<tr ${bgRow}>`;
 
     // Colonnes pronostics par joueur — tous les joueurs, toujours, moi en premier
     joueursOrd.forEach(jo => {
@@ -1124,39 +1129,47 @@ function renderResultats(j, data) {
       const colCls = jo.id === monIdRes ? ' col-moi' : '';
 
       if (!vis) {
-        html += `<td class="hidden-cell${colCls}">?</td>`;
+        htmlScroll += `<td class="hidden-cell${colCls}">?</td>`;
       } else if (!p) {
-        html += `<td class="${colCls.trim()}" style="color:var(--gris-l)">—</td>`;
+        htmlScroll += `<td class="${colCls.trim()}" style="color:var(--gris-l)">—</td>`;
       } else if (!sr) {
         // Score pas encore entré : afficher le prono sans couleur
-        html += `<td class="prono-cell${colCls}" style="color:var(--gris)">${p.dom}-${p.ext}</td>`;
+        htmlScroll += `<td class="prono-cell${colCls}" style="color:var(--gris)">${p.dom}-${p.ext}</td>`;
       } else if (pts !== null) {
         // Scores disponibles : toujours afficher avec couleur et points, prono puis points en dessous
         const cls = pts === 7 ? 'pts-7' : pts === 5 ? 'pts-5' : pts === 3 ? 'pts-3' : 'pts-0';
         const tardifCell = (data.statuts?.[jo.id]?.tardif) ? ' ⚠️' : '';
         const pronoStr = p.passé ? '— (passé)' : p.dom + '-' + p.ext;
-        html += '<td class="prono-cell ' + cls + colCls + '">'
+        htmlScroll += '<td class="prono-cell ' + cls + colCls + '">'
           + pronoStr + tardifCell + '<br><small>' + pts + 'pt</small></td>';
       } else {
         // Pas encore de score : prono visible, grisé
-        html += `<td class="prono-cell${colCls}" style="color:var(--gris)">${p.dom}-${p.ext}</td>`;
+        htmlScroll += `<td class="prono-cell${colCls}" style="color:var(--gris)">${p.dom}-${p.ext}</td>`;
       }
     });
 
-    html += '</tr>';
+    htmlScroll += '</tr>';
   });
 
   // Ligne totaux (seulement si points affichés)
   if (afficherPtsGains) {
-    html += `<tr style="background:var(--color-background-secondary);font-weight:500">
+    htmlFrozen += `<tr style="background:var(--color-background-secondary);font-weight:500">
       <td colspan="2" style="text-align:right;padding-right:8px;font-size:12px;background:var(--color-background-secondary)">Total</td>
+    </tr>`;
+    htmlScroll += `<tr style="background:var(--color-background-secondary);font-weight:500">
       ${joueursOrd.map(jo =>
         `<td class="${jo.id===monIdRes?'col-moi':''}" style="font-size:13px;color:var(--orange);font-weight:700">${totaux[jo.id] || '—'}</td>`
       ).join('')}
     </tr>`;
   }
 
-  html += '</tbody></table></div>';
+  htmlFrozen += '</tbody></table>';
+  htmlScroll += '</tbody></table>';
+
+  const html = `<div class="resultats-table">
+    ${htmlFrozen}
+    <div class="rt-scroll-outer">${htmlScroll}</div>
+  </div>`;
 
   // Appliquer pénalités tardives
   APP.joueurs.forEach(jo => {
