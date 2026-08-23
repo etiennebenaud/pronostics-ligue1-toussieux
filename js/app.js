@@ -1283,6 +1283,17 @@ function renderResultats(j, data) {
     html += '</div>';
   }
 
+  // La Gazette : commentaire de la journée, en toute fin de page
+  const commentaireJournee = (data.commentaire || '').trim();
+  html += '<div class="card mt-12">';
+  html += '<div class="card-title">🗞️ LA GAZETTE DE TOUSSI\'PRONOS</div>';
+  if (commentaireJournee) {
+    html += '<p style="font-size:13px;line-height:1.6;margin:0;white-space:pre-wrap">' + commentaireJournee + '</p>';
+  } else if (!APP.estAdmin) {
+    html += '<p class="text-sm text-muted" style="margin:0">Pas encore de commentaire pour cette journée.</p>';
+  }
+  html += '</div>';
+
   const rc = document.getElementById('resultats-content');
   if (rc) rc.innerHTML = html;
 }
@@ -1586,12 +1597,22 @@ function chargerClassementSaison() {
     }
 
     // ── Tri final ────────────────────────────────────────────
-    const sorted  = APP.joueurs.slice().sort((a, b) => totaux[b.id].pts - totaux[a.id].pts);
-    const monId   = APP.joueurActif?.id;
-    const saison  = saisonLabel(APP.saisonAffichee || saisonKey(CONFIG.saison));
+    const sorted    = APP.joueurs.slice().sort((a, b) => totaux[b.id].pts - totaux[a.id].pts);
+    const monId     = APP.joueurActif?.id;
+    const saisonKeyVal = APP.saisonAffichee || saisonKey(CONFIG.saison);
+    const saison    = saisonLabel(saisonKeyVal);
+
+    // Commentaire admin sur le classement général (stocké au niveau de la saison)
+    let commentaireClassement = '';
+    try {
+      const saisonSnap = await APP.db.collection('saisons').doc(saisonKeyVal).get();
+      commentaireClassement = saisonSnap.exists ? (saisonSnap.data().commentaireClassement || '') : '';
+    } catch(e) { /* silencieux */ }
 
     let html = '<div class="card">';
     html += '<div class="card-title">🏆 Classement général — ' + saison + '</div>';
+
+
 
     // Bandeau ESPN (classement réel + buteur)
     if (avecBonus && classementReel && classementReel.length > 0) {
@@ -1704,6 +1725,26 @@ function chargerClassementSaison() {
     });
 
     html += '</div>';
+
+    // ── La Gazette : commentaire sur le classement général, en fin de page ──
+    html += '<div class="card mt-12">';
+    html += '<div class="card-title">🗞️ LA GAZETTE DE TOUSSI\'PRONOS</div>';
+    if (commentaireClassement.trim()) {
+      html += '<p style="font-size:13px;line-height:1.6;margin:0;white-space:pre-wrap">'
+        + commentaireClassement.trim() + '</p>';
+    } else if (!APP.estAdmin) {
+      html += '<p class="text-sm text-muted" style="margin:0">Pas encore de commentaire pour ce classement.</p>';
+    }
+    if (APP.estAdmin) {
+      html += '<div style="margin-top:' + (commentaireClassement.trim() ? '12px' : '0') + '">'
+        + '<textarea id="admin-commentaire-classement" class="profil-input" rows="4"'
+        + ' placeholder="Le récap savoureux du classement général, avec ou sans emojis..."'
+        + ' style="resize:vertical;font-family:inherit;font-size:13px">' + commentaireClassement + '</textarea>'
+        + '<button class="btn-primary" onclick="sauverCommentaireClassement(\'' + saisonKeyVal + '\')" style="margin-top:6px;font-size:13px;padding:8px">'
+        + '📝 Publier</button></div>';
+    }
+    html += '</div>';
+
     if (container) container.innerHTML = html;
   }).catch(e => {
     console.error(e);
@@ -1775,6 +1816,7 @@ function chargerClassementJournee(j) {
     });
 
     html += '</div>';
+
     if (container) container.innerHTML = html;
   }).catch(e => {
     console.error(e);
@@ -1974,11 +2016,13 @@ async function ouvrirAdminJournee() {
   // Charger les données existantes de la journée
   let matchsActuels = [];
   let deadlineActuelle = '';
+  let commentaireActuel = '';
   try {
     const snap = await dbSaison('journees', `j${j}`).get();
     if (snap.exists) {
-      matchsActuels   = snap.data().matchs   || [];
-      const dl        = snap.data().deadline || null;
+      matchsActuels     = snap.data().matchs       || [];
+      commentaireActuel = snap.data().commentaire  || '';
+      const dl          = snap.data().deadline     || null;
       if (dl) {
         const d = new Date(dl);
         deadlineActuelle = datetimeLocalValue(d);
@@ -2066,10 +2110,46 @@ async function ouvrirAdminJournee() {
       ✅ Enregistrer la journée ${j}
     </button>
     <hr class="divider">
+    <div style="margin-bottom:8px">
+      <label class="profil-label">🗞️ La Gazette — commentaire de la journée (visible par tous, en bas de Résultats)</label>
+      <textarea id="admin-commentaire-journee" class="profil-input" rows="8"
+        placeholder="🚨 JOHANN PREND LES COMMANDES !&#10;&#10;Et c'est parti pour une nouvelle saison... Avec 20 points, il s'installe seul en tête..."
+        style="resize:vertical;font-family:inherit;font-size:13px;line-height:1.5">${commentaireActuel}</textarea>
+      <button class="btn-primary" onclick="sauverCommentaireJournee(${j})" style="margin-top:6px">
+        📝 Publier dans la Gazette
+      </button>
+    </div>
+    <hr class="divider">
     <button class="btn-danger" onclick="resetJournee(${j})">
       🗑️ Réinitialiser la journée ${j}
     </button>
     <p class="text-sm text-muted text-center mt-8">Efface tous les pronostics.</p>`;
+}
+
+// ── Sauvegarder uniquement le commentaire de la journée ────────
+async function sauverCommentaireJournee(j) {
+  const texte = document.getElementById('admin-commentaire-journee')?.value.trim() || '';
+  try {
+    await dbSaison('journees', `j${j}`).set({ commentaire: texte }, { merge: true });
+    showToast(texte ? '💬 Commentaire publié' : '🗑️ Commentaire supprimé', 'success');
+    chargerTab('resultats');
+  } catch(e) {
+    console.error(e);
+    showToast('Erreur lors de la publication', 'error');
+  }
+}
+
+// ── Sauvegarder le commentaire sur le classement général ────────
+async function sauverCommentaireClassement(saisonKeyVal) {
+  const texte = document.getElementById('admin-commentaire-classement')?.value.trim() || '';
+  try {
+    await APP.db.collection('saisons').doc(saisonKeyVal).set({ commentaireClassement: texte }, { merge: true });
+    showToast(texte ? '💬 Commentaire publié' : '🗑️ Commentaire supprimé', 'success');
+    chargerClassementSaison();
+  } catch(e) {
+    console.error(e);
+    showToast('Erreur lors de la publication', 'error');
+  }
 }
 
 // Recharger une journée depuis l'API et remplir les champs
