@@ -1283,16 +1283,14 @@ function renderResultats(j, data) {
     html += '</div>';
   }
 
-  // La Gazette : commentaire de la journée, en toute fin de page
+  // La Gazette : commentaire de la journée, en toute fin de page — masquée si vide
   const commentaireJournee = (data.commentaire || '').trim();
-  html += '<div class="card mt-12">';
-  html += '<div class="card-title">🗞️ LA GAZETTE DE TOUSSI\'PRONOS</div>';
   if (commentaireJournee) {
+    html += '<div class="card mt-12">';
+    html += '<div class="card-title">🗞️ LA GAZETTE DE TOUSSI\'PRONOS</div>';
     html += '<p style="font-size:13px;line-height:1.6;margin:0;white-space:pre-wrap">' + commentaireJournee + '</p>';
-  } else if (!APP.estAdmin) {
-    html += '<p class="text-sm text-muted" style="margin:0">Pas encore de commentaire pour cette journée.</p>';
+    html += '</div>';
   }
-  html += '</div>';
 
   const rc = document.getElementById('resultats-content');
   if (rc) rc.innerHTML = html;
@@ -1727,23 +1725,26 @@ function chargerClassementSaison() {
     html += '</div>';
 
     // ── La Gazette : commentaire sur le classement général, en fin de page ──
-    html += '<div class="card mt-12">';
-    html += '<div class="card-title">🗞️ LA GAZETTE DE TOUSSI\'PRONOS</div>';
-    if (commentaireClassement.trim()) {
-      html += '<p style="font-size:13px;line-height:1.6;margin:0;white-space:pre-wrap">'
-        + commentaireClassement.trim() + '</p>';
-    } else if (!APP.estAdmin) {
-      html += '<p class="text-sm text-muted" style="margin:0">Pas encore de commentaire pour ce classement.</p>';
+    // Masquée pour les joueurs si vide. Reste visible pour l'admin (seul endroit
+    // pour rédiger un premier commentaire, pas de modal séparé ici).
+    const aCommentaireClassement = commentaireClassement.trim().length > 0;
+    if (aCommentaireClassement || APP.estAdmin) {
+      html += '<div class="card mt-12">';
+      html += '<div class="card-title">🗞️ LA GAZETTE DE TOUSSI\'PRONOS</div>';
+      if (aCommentaireClassement) {
+        html += '<p style="font-size:13px;line-height:1.6;margin:0;white-space:pre-wrap">'
+          + commentaireClassement.trim() + '</p>';
+      }
+      if (APP.estAdmin) {
+        html += '<div style="margin-top:' + (aCommentaireClassement ? '12px' : '0') + '">'
+          + '<textarea id="admin-commentaire-classement" class="profil-input" rows="4"'
+          + ' placeholder="Le récap savoureux du classement général, avec ou sans emojis..."'
+          + ' style="resize:vertical;font-family:inherit;font-size:13px">' + commentaireClassement + '</textarea>'
+          + '<button class="btn-primary" onclick="sauverCommentaireClassement(\'' + saisonKeyVal + '\')" style="margin-top:6px;font-size:13px;padding:8px">'
+          + '📝 Publier</button></div>';
+      }
+      html += '</div>';
     }
-    if (APP.estAdmin) {
-      html += '<div style="margin-top:' + (commentaireClassement.trim() ? '12px' : '0') + '">'
-        + '<textarea id="admin-commentaire-classement" class="profil-input" rows="4"'
-        + ' placeholder="Le récap savoureux du classement général, avec ou sans emojis..."'
-        + ' style="resize:vertical;font-family:inherit;font-size:13px">' + commentaireClassement + '</textarea>'
-        + '<button class="btn-primary" onclick="sauverCommentaireClassement(\'' + saisonKeyVal + '\')" style="margin-top:6px;font-size:13px;padding:8px">'
-        + '📝 Publier</button></div>';
-    }
-    html += '</div>';
 
     if (container) container.innerHTML = html;
   }).catch(e => {
