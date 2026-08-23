@@ -238,17 +238,13 @@ async function demarrerApp() {
   fetchEquipesSaison(saisonApiFormat(CONFIG.saison))
     .then(eq => { if (eq && eq.length > 0) APP.equipesL1 = eq; })
     .catch(() => {}); // silencieux si indispo
-  // Détection automatique : match en cours ? sinon prochaine journée à pronostiquer
+  // Détection automatique : Résultats si un match de la journée active se joue
+  // dans moins de 24h (et que tout n'est pas déjà passé), sinon Grille.
   let onglet = 'grille';
   try {
     const etat = await detecterEtatDemarrage();
-    if (etat.journeeEnCours) {
-      APP.journeeActive = etat.journeeEnCours;
-      onglet = 'resultats';
-    } else {
-      APP.journeeActive = etat.journeeSuivante;
-      onglet = 'grille';
-    }
+    APP.journeeActive = etat.journee;
+    onglet = etat.onglet;
   } catch(e) {
     APP.journeeActive = CONFIG.regles.journeeDefaut > 0 ? CONFIG.regles.journeeDefaut : 1;
   }

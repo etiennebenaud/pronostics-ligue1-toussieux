@@ -508,9 +508,7 @@ async function validerJourneeStockee(numJ) {
 //  - journeeSuivante  : première journée encore ouverte aux pronostics (deadline future)
 async function detecterEtatDemarrage() {
   const now = Date.now();
-  let journeeEnCours  = null;
-  let journeeSuivante = null;
-  const DUREE_MATCH_MS = 2.5 * 3600 * 1000; // 2h30 : couvre match + mi-temps + arrêts de jeu
+  const VINGT_QUATRE_H = 24 * 3600 * 1000;
 
   for (let j = 1; j <= CONFIG.nbJournees; j++) {
     let data;
@@ -520,29 +518,30 @@ async function detecterEtatDemarrage() {
       data = snap.data();
     } catch(e) { break; }
 
-    const matchs   = data.matchs   || [];
-    const deadline = data.deadline || null;
+    const matchs = data.matchs || [];
+    if (matchs.length === 0) continue;
 
-    if (journeeEnCours === null) {
-      const aUnMatchEnCours = matchs.some(m => {
-        if (m.scoreEnCours === true) return true;
-        if (m.timestamp && m.timestamp <= now && !m.scoreReel) {
-          return (now - m.timestamp) < DUREE_MATCH_MS;
-        }
-        return false;
-      });
-      if (aUnMatchEnCours) journeeEnCours = j;
-    }
+    // Une journée est "terminée" si tous ses matchs sont déjà passés (coup d'envoi dépassé)
+    const avecTimestamp = matchs.filter(m => m.timestamp);
+    if (avecTimestamp.length === 0) continue;
+    const tousPasses = avecTimestamp.every(m => m.timestamp <= now);
+    if (tousPasses) continue; // journée entièrement jouée → passer à la suivante
 
-    if (journeeSuivante === null && deadline && deadline > now) {
-      journeeSuivante = j;
-    }
+    // Prochain match pas encore joué de cette journée
+    const aVenir = avecTimestamp
+      .filter(m => m.timestamp > now)
+      .sort((a, b) => a.timestamp - b.timestamp);
+    const prochain = aVenir[0];
+    if (!prochain) continue; // sécurité
 
-    if (journeeEnCours !== null && journeeSuivante !== null) break;
+    const dansMoins24h = (prochain.timestamp - now) < VINGT_QUATRE_H;
+
+    return {
+      journee: j,
+      onglet: dansMoins24h ? 'resultats' : 'grille',
+    };
   }
 
-  return {
-    journeeEnCours,
-    journeeSuivante: journeeSuivante || CONFIG.nbJournees,
-  };
+  // Toutes les journées connues sont terminées (ou aucune donnée) : dernière journée, Grille
+  return { journee: CONFIG.nbJournees, onglet: 'grille' };
 }
