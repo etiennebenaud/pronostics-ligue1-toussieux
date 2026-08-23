@@ -348,19 +348,19 @@ body {
   font-size: 12px;
 }
 .resultats-table th, .resultats-table td {
-  padding: 0 8px; text-align: center;
+  padding: 0 4px; text-align: center;
   border-bottom: 1px solid var(--gris-l);
   white-space: nowrap; box-sizing: border-box;
   vertical-align: middle;
 }
 /* Hauteurs fixes et identiques dans les deux tableaux : garantit l'alignement
    même si un côté n'a besoin que d'une ligne quand l'autre en a deux. */
-.resultats-table th { height: 38px; }
-.resultats-table td { height: 46px; }
+.resultats-table th { height: 34px; }
+.resultats-table td { height: 42px; }
 .resultats-table th {
   background: var(--bleu); color: var(--blanc);
   font-size: 11px; font-weight: 700;
-  min-width: 46px;
+  min-width: 34px;
 }
 .resultats-table tr:nth-child(even) td { background: #FAFBFC; }
 
@@ -369,14 +369,16 @@ body {
   overflow-x: auto; flex: 1; min-width: 0;
   -webkit-overflow-scrolling: touch;
 }
+/* Colonnes des pronostiqueurs resserrées au maximum pour en afficher plus */
+.rt-scroll th, .rt-scroll td { min-width: 30px; padding: 0 3px; }
 
 .match-col {
   text-align: left; font-weight: 600; color: var(--bleu);
-  min-width: 108px; font-size: 11px;
-  white-space: normal !important; line-height: 1.25;
+  min-width: 96px; font-size: 10.5px; padding: 0 6px !important;
+  white-space: normal !important; line-height: 1.2;
 }
-.score-cell { font-weight: 800; color: var(--vert); min-width: 54px; }
-.prono-cell { font-size: 11px; line-height: 1.3; }
+.score-cell { font-weight: 800; color: var(--vert); min-width: 46px; padding: 0 4px !important; }
+.prono-cell { font-size: 10.5px; line-height: 1.25; }
 .prono-cell.pts-7 { color: #7B5C00; font-weight: 800; }
 .prono-cell.pts-5 { color: var(--soumis-t); font-weight: 700; }
 .prono-cell.pts-3 { color: var(--bleu); }
