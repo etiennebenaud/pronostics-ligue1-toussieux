@@ -1007,6 +1007,20 @@ function changerJourneeR(d) {
   }
 }
 
+// ── Ordre des colonnes joueurs dans le tableau Résultats ──────
+// Le joueur connecté est toujours affiché en première colonne (et mis en
+// évidence), suivi de tous les autres dans leur ordre habituel. Aucun
+// plafond : tous les joueurs restent affichés, on scrolle pour les voir.
+function joueursOrdreResultats() {
+  const tous  = APP.joueurs;
+  const monId = APP.joueurActif?.id;
+  if (!monId) return tous;
+  const moi    = tous.find(j => j.id === monId);
+  if (!moi) return tous;
+  const autres = tous.filter(j => j.id !== monId);
+  return [moi, ...autres];
+}
+
 function renderResultats(j, data) {
   const matchs = data.matchs || genererMatchsVides();
 
@@ -1039,10 +1053,13 @@ function renderResultats(j, data) {
 
   const totaux = Object.fromEntries(APP.joueurs.map(jo => [jo.id, 0]));
 
+  const monIdRes    = APP.joueurActif?.id;
+  const joueursOrd  = joueursOrdreResultats();
+
   let html = `<div class="resultats-table"><table><thead><tr>
     <th class="match-col">Match</th>
     <th>Score</th>
-    ${APP.joueurs.map(jo => `<th title="${jo.nom}">${jo.emoji}</th>`).join('')}
+    ${joueursOrd.map(jo => `<th class="${jo.id===monIdRes?'col-moi':''}" title="${jo.nom}">${jo.emoji}</th>`).join('')}
   </tr></thead><tbody>`;
 
   matchs.forEach((match, idx) => {
@@ -1090,14 +1107,15 @@ function renderResultats(j, data) {
       scoreHtml = '<span style="color:var(--gris-l);font-size:13px">—</span>';
     }
 
+    const bgCellMatch = idx % 2 === 0 ? '#fff' : 'var(--color-background-secondary)';
     html += `<tr ${bgRow}>
-      <td class="match-col" style="font-size:11px">
+      <td class="match-col" style="font-size:11px;background:${bgCellMatch}">
         ${match.domicile||'?'} - ${match.exterieur||'?'}
       </td>
       <td class="score-cell" style="white-space:nowrap">${scoreHtml}</td>`;
 
-    // Colonnes pronostics par joueur
-    APP.joueurs.forEach(jo => {
+    // Colonnes pronostics par joueur — tous les joueurs, toujours, moi en premier
+    joueursOrd.forEach(jo => {
       const p   = soumissions[jo.id]?.[idx];
       // Toujours calculer les points si scores disponibles
       const pts = (p && sr) ? calculerPoints(p, sr) : null;
@@ -1107,23 +1125,25 @@ function renderResultats(j, data) {
         || APP.joueurActif?.id === jo.id
         || (APP.joueurActif && soumissions[APP.joueurActif.id] && soumissions[jo.id]);
 
+      const colCls = jo.id === monIdRes ? ' col-moi' : '';
+
       if (!vis) {
-        html += `<td class="hidden-cell">?</td>`;
+        html += `<td class="hidden-cell${colCls}">?</td>`;
       } else if (!p) {
-        html += `<td style="color:var(--gris-l)">—</td>`;
+        html += `<td class="${colCls.trim()}" style="color:var(--gris-l)">—</td>`;
       } else if (!sr) {
         // Score pas encore entré : afficher le prono sans couleur
-        html += `<td class="prono-cell" style="color:var(--gris)">${p.dom}-${p.ext}</td>`;
+        html += `<td class="prono-cell${colCls}" style="color:var(--gris)">${p.dom}-${p.ext}</td>`;
       } else if (pts !== null) {
-        // Scores disponibles : toujours afficher avec couleur et points
+        // Scores disponibles : toujours afficher avec couleur et points, prono puis points en dessous
         const cls = pts === 7 ? 'pts-7' : pts === 5 ? 'pts-5' : pts === 3 ? 'pts-3' : 'pts-0';
         const tardifCell = (data.statuts?.[jo.id]?.tardif) ? ' ⚠️' : '';
         const pronoStr = p.passé ? '— (passé)' : p.dom + '-' + p.ext;
-        html += '<td class="prono-cell ' + cls + '">'
+        html += '<td class="prono-cell ' + cls + colCls + '">'
           + pronoStr + tardifCell + '<br><small>' + pts + 'pt</small></td>';
       } else {
         // Pas encore de score : prono visible, grisé
-        html += `<td class="prono-cell" style="color:var(--gris)">${p.dom}-${p.ext}</td>`;
+        html += `<td class="prono-cell${colCls}" style="color:var(--gris)">${p.dom}-${p.ext}</td>`;
       }
     });
 
@@ -1133,9 +1153,9 @@ function renderResultats(j, data) {
   // Ligne totaux (seulement si points affichés)
   if (afficherPtsGains) {
     html += `<tr style="background:var(--color-background-secondary);font-weight:500">
-      <td colspan="2" style="text-align:right;padding-right:8px;font-size:12px">Total</td>
-      ${APP.joueurs.map(jo =>
-        `<td style="font-size:13px;color:var(--orange);font-weight:700">${totaux[jo.id] || '—'}</td>`
+      <td colspan="2" class="match-col" style="text-align:right;padding-right:8px;font-size:12px;background:var(--color-background-secondary)">Total</td>
+      ${joueursOrd.map(jo =>
+        `<td class="${jo.id===monIdRes?'col-moi':''}" style="font-size:13px;color:var(--orange);font-weight:700">${totaux[jo.id] || '—'}</td>`
       ).join('')}
     </tr>`;
   }
