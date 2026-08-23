@@ -1058,7 +1058,7 @@ function renderResultats(j, data) {
 
   let html = `<div class="resultats-table"><table><thead><tr>
     <th class="match-col">Match</th>
-    <th>Score</th>
+    <th style="min-width:54px">Score</th>
     ${joueursOrd.map(jo => `<th class="${jo.id===monIdRes?'col-moi':''}" title="${jo.nom}">${jo.emoji}</th>`).join('')}
   </tr></thead><tbody>`;
 
@@ -1153,7 +1153,7 @@ function renderResultats(j, data) {
   // Ligne totaux (seulement si points affichés)
   if (afficherPtsGains) {
     html += `<tr style="background:var(--color-background-secondary);font-weight:500">
-      <td colspan="2" class="match-col" style="text-align:right;padding-right:8px;font-size:12px;background:var(--color-background-secondary)">Total</td>
+      <td colspan="2" style="text-align:right;padding-right:8px;font-size:12px;background:var(--color-background-secondary)">Total</td>
       ${joueursOrd.map(jo =>
         `<td class="${jo.id===monIdRes?'col-moi':''}" style="font-size:13px;color:var(--orange);font-weight:700">${totaux[jo.id] || '—'}</td>`
       ).join('')}
