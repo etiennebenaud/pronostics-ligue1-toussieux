@@ -229,7 +229,7 @@ async function chargerPalmares() {
             </div>
             <div class="classement-nom">${j.emoji || '⚽'} ${j.nom}</div>
             <div class="classement-pts">${j.pts}<span>pts</span></div>
-            <div class="classement-gains">${j.gains}€</div>
+            ${APP.argentActif ? '<div class="classement-gains">' + j.gains + '€</div>' : '<div></div>'}
           </div>`;
       };
 

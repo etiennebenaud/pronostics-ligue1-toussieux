@@ -345,7 +345,7 @@ function afficherValidationCalendrier(journees, saisonInput) {
   keys.forEach(j => {
     const matchs = journees[j];
     const deadline = matchs[0]?.timestamp
-      ? new Date(matchs[0].timestamp - 3600000).toISOString().slice(0,16)
+      ? datetimeLocalValue(matchs[0].timestamp - 3600000)
       : '';
 
     html += `
@@ -499,4 +499,50 @@ async function validerJourneeStockee(numJ) {
   const matchs = _journeesChargees[numJ];
   if (!matchs) { showToast('Journée non trouvée en mémoire', 'error'); return; }
   await validerJournee(numJ, matchs, _saisonChargee);
+}
+
+
+// ── Détection combinée au démarrage : y a-t-il un match en cours ? ────
+// Retourne { journeeEnCours, journeeSuivante } :
+//  - journeeEnCours   : numéro de journée avec au moins un match en cours (ou null)
+//  - journeeSuivante  : première journée encore ouverte aux pronostics (deadline future)
+async function detecterEtatDemarrage() {
+  const now = Date.now();
+  let journeeEnCours  = null;
+  let journeeSuivante = null;
+  const DUREE_MATCH_MS = 2.5 * 3600 * 1000; // 2h30 : couvre match + mi-temps + arrêts de jeu
+
+  for (let j = 1; j <= CONFIG.nbJournees; j++) {
+    let data;
+    try {
+      const snap = await dbSaison('journees', `j${j}`).get();
+      if (!snap.exists) continue;
+      data = snap.data();
+    } catch(e) { break; }
+
+    const matchs   = data.matchs   || [];
+    const deadline = data.deadline || null;
+
+    if (journeeEnCours === null) {
+      const aUnMatchEnCours = matchs.some(m => {
+        if (m.scoreEnCours === true) return true;
+        if (m.timestamp && m.timestamp <= now && !m.scoreReel) {
+          return (now - m.timestamp) < DUREE_MATCH_MS;
+        }
+        return false;
+      });
+      if (aUnMatchEnCours) journeeEnCours = j;
+    }
+
+    if (journeeSuivante === null && deadline && deadline > now) {
+      journeeSuivante = j;
+    }
+
+    if (journeeEnCours !== null && journeeSuivante !== null) break;
+  }
+
+  return {
+    journeeEnCours,
+    journeeSuivante: journeeSuivante || CONFIG.nbJournees,
+  };
 }

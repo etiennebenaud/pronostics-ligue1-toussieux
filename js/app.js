@@ -7,11 +7,23 @@ const APP = {
   estAdmin: false, journeeActive: 1,
   ecouteurs: [], deferredInstall: null,
   autoRefreshTimer: null, // interval auto-refresh ESPN
+  argentActif: false, // affichage des gains en € — désactivé par défaut
   saisonAffichee: null,  // null = saison courante
   listeSaisons: [],
   saisonEstCloturee: false, // true si la saison affichée est clôturée
   equipesL1: [],  // chargées dynamiquement depuis TheSportsDB
 };
+
+// ── Convertit un timestamp (ou Date) en valeur pour <input type="datetime-local">
+// en utilisant l'heure LOCALE du navigateur (jamais UTC), pour éviter tout décalage
+// horaire lors de la relecture par new Date(valeur) qui traite la chaîne comme locale.
+function datetimeLocalValue(msOuDate) {
+  if (!msOuDate) return '';
+  const d = (msOuDate instanceof Date) ? msOuDate : new Date(msOuDate);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 
 // ── Démarrage ────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
@@ -202,21 +214,47 @@ async function demarrerApp() {
   APP.saisonAffichee = saisonKey(CONFIG.saison);
   // La saison courante n'est jamais clôturée par définition
   APP.saisonEstCloturee = false;
+
+  // Charger le réglage "argent en jeu" (désactivé par défaut) et écouter les changements
+  try {
+    const argentSnap = await APP.db.collection('config').doc('general').get();
+    APP.argentActif = argentSnap.exists ? (argentSnap.data().argentActif === true) : false;
+  } catch(e) { APP.argentActif = false; }
+  // Écouteur dédié et permanent (PAS dans APP.ecouteurs, qui est vidé à chaque changement d'onglet)
+  if (APP._argentUnsub) APP._argentUnsub();
+  APP._argentUnsub = APP.db.collection('config').doc('general').onSnapshot(snap => {
+    const nouvelleValeur = snap.exists ? (snap.data().argentActif === true) : false;
+    if (nouvelleValeur !== APP.argentActif) {
+      APP.argentActif = nouvelleValeur;
+      // Re-render l'onglet actif pour refléter le changement immédiatement
+      const activeTab = document.querySelector('.nav-tab.active')?.dataset?.tab;
+      if (activeTab) chargerTab(activeTab);
+    }
+  });
+
   await chargerListeSaisons();
   await initialiserSaison(APP.saisonAffichee);
   // Charger les équipes en arrière-plan (non-bloquant)
   fetchEquipesSaison(saisonApiFormat(CONFIG.saison))
     .then(eq => { if (eq && eq.length > 0) APP.equipesL1 = eq; })
     .catch(() => {}); // silencieux si indispo
-  // Détection automatique de la journée courante
+  // Détection automatique : match en cours ? sinon prochaine journée à pronostiquer
+  let onglet = 'grille';
   try {
-    APP.journeeActive = await detecterJourneeCouranteFirestore();
+    const etat = await detecterEtatDemarrage();
+    if (etat.journeeEnCours) {
+      APP.journeeActive = etat.journeeEnCours;
+      onglet = 'resultats';
+    } else {
+      APP.journeeActive = etat.journeeSuivante;
+      onglet = 'grille';
+    }
   } catch(e) {
     APP.journeeActive = CONFIG.regles.journeeDefaut > 0 ? CONFIG.regles.journeeDefaut : 1;
   }
   const jBadge = document.getElementById('header-journee-badge');
   if (jBadge) jBadge.textContent = 'J.' + APP.journeeActive;
-  chargerTab('grille');
+  chargerTab(onglet);
 }
 
 function deconnexion() {
@@ -226,6 +264,7 @@ function deconnexion() {
     clearInterval(APP.autoRefreshTimer);
     APP.autoRefreshTimer = null;
   }
+  if (APP._argentUnsub) { APP._argentUnsub(); APP._argentUnsub = null; }
   APP.joueurActif = null; APP.estAdmin = false; APP.joueurs = [];
   localStorage.removeItem('pronostics_joueur_id');
   localStorage.removeItem('pronostics_admin');
@@ -330,6 +369,27 @@ function chargerAdmin() {
           👥 Gérer les joueurs (${APP.joueurs.length} actif${APP.joueurs.length>1?'s':''})
         </button>
         <p class="text-sm text-muted">Ajouter, modifier ou retirer des participants.</p>
+      </div>
+
+      <!-- ── Argent en jeu ── -->
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title" style="margin-bottom:8px">💰 Argent en jeu</div>
+        <label style="display:flex;align-items:center;justify-content:space-between;gap:10px;
+                      padding:10px 12px;background:var(--color-background-secondary);
+                      border-radius:var(--border-radius-md);cursor:pointer">
+          <span style="font-size:13px;font-weight:500">
+            Afficher les gains en € aux joueurs
+          </span>
+          <input type="checkbox" id="admin-argent-actif" ${APP.argentActif ? 'checked' : ''}
+            onchange="toggleArgentActif(this.checked)"
+            style="width:20px;height:20px;cursor:pointer">
+        </label>
+        <p class="text-sm text-muted mt-8">
+          ${APP.argentActif
+            ? 'Les gains (mise, 1er/2e/3e) sont visibles par tous les joueurs.'
+            : 'Désactivé par défaut : seuls les points sont affichés, aucune somme d\'argent n\'apparaît dans l\'app.'}
+          Ce réglage s'applique instantanément à tout le monde.
+        </p>
       </div>
 
       <!-- ── Règles soumissions tardives ── -->
@@ -610,6 +670,7 @@ function renderGrille(j, data) {
 
   const mc = document.getElementById('grille-matchs');
   if (!mc) return;
+  const nowGrille = Date.now();
   mc.innerHTML = matchs.map((match, idx) => {
     const sr = match.scoreReel || null;
     const pts = (prono, reel) => reel ? calculerPoints(prono, reel) : null;
@@ -620,7 +681,22 @@ function renderGrille(j, data) {
 
     // En mode retard : match passé = forcément verrouillé (0 pt)
     const matchPasse   = modeRetard && matchDejaJoue(match);
-    const lockedMatch  = locked || matchPasse;
+
+    // Réouverture admin d'un match spécifique : reste modifiable jusqu'à 1h avant le coup d'envoi,
+    // même si la journée est déjà verrouillée dans son ensemble
+    const reouvertActif = !saisonRO && match.reouvert === true
+      && match.timestamp && nowGrille < (match.timestamp - 3600000);
+
+    const lockedMatch  = (locked || matchPasse) && !reouvertActif;
+    const modifBtn = (reouvertActif && locked)
+      ? '<button onclick="sauverPronoMatchReouvert(' + j + ',' + idx + ')"'
+        + ' style="margin-left:6px;font-size:11px;background:var(--or);color:white;border:none;'
+        + 'border-radius:6px;padding:5px 9px;cursor:pointer;font-weight:500;white-space:nowrap">'
+        + '💾 Enregistrer</button>'
+      : '';
+    const badgeRouvert = (reouvertActif && locked)
+      ? '<div style="font-size:10px;color:var(--or);font-weight:600;margin-top:2px">🔓 Rouvert par l\'admin</div>'
+      : '';
     const inputs = monId ? '<div class="score-inputs">'
       + '<input type="number" min="0" max="20" class="score-input ' + (lockedMatch?'locked':'') + '"'
       + ' id="sc-' + idx + '-dom" value="' + (monProno.dom!==''?monProno.dom:'') + '"'
@@ -629,8 +705,10 @@ function renderGrille(j, data) {
       + '<input type="number" min="0" max="20" class="score-input ' + (lockedMatch?'locked':'') + '"'
       + ' id="sc-' + idx + '-ext" value="' + (monProno.ext!==''?monProno.ext:'') + '"'
       + (lockedMatch?' readonly':'') + ' onchange="sauverPronoTemp(' + idx + ')" placeholder="—">'
+      + modifBtn
       + (matchPasse ? '<span style="font-size:10px;color:var(--gris);margin-left:4px">0pt</span>' : '')
       + (mesPoints!==null ? '<div class="points-badge points-' + mesPoints + '">' + mesPoints + '</div>' : '')
+      + badgeRouvert
       + '</div>' : '';
 
     const autres = peutVoir && APP.joueurs.length > 1 ? `
@@ -1136,7 +1214,8 @@ function renderResultats(j, data) {
       const rang      = (pts !== ptsPrecedents) ? i + 1 : rangCourant;
       rangCourant = rang; ptsPrecedents = pts;
 
-      const gain = afficherPtsGains
+      const afficherGains = afficherPtsGains && APP.argentActif;
+      const gain = afficherGains
         ? ([CONFIG.gains.premier, CONFIG.gains.deuxieme, CONFIG.gains.troisieme][rang - 1] || 0)
         : 0;
       const isMe = jo.id === monId2;
@@ -1156,7 +1235,7 @@ function renderResultats(j, data) {
         + '<div class="rang-badge ' + rangClass + '">' + rangLabel + '</div>'
         + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + '</div>'
         + '<div class="classement-pts">' + pts + subLabel + '<span>pts</span></div>'
-        + (afficherPtsGains && gain > 0 ? '<div class="classement-gains">+' + gain + '€</div>' : '<div></div>')
+        + (afficherGains && gain > 0 ? '<div class="classement-gains">+' + gain + '€</div>' : '<div></div>')
         + '</div>';
     });
 
@@ -1496,7 +1575,7 @@ function chargerClassementSaison() {
       + 'color:var(--gris);text-transform:uppercase;margin-bottom:4px">'
       + '<div></div><div>Joueur</div>'
       + (avecBonus ? '<div style="text-align:right">Sans</div><div style="text-align:right">Avec</div>' : '<div style="text-align:right">Pts</div>')
-      + '<div style="text-align:right">Gains</div>'
+      + (APP.argentActif ? '<div style="text-align:right">Gains</div>' : '<div></div>')
       + '</div>';
 
     sorted.forEach((jo, i) => {
@@ -1533,7 +1612,8 @@ function chargerClassementSaison() {
         html += '<div class="classement-pts">' + ptsTotal + '<span>pts</span></div>';
       }
 
-      html += '<div class="classement-gains">' + gains + '€</div>';
+      if (APP.argentActif) html += '<div class="classement-gains">' + gains + '€</div>';
+      else html += '<div></div>';
       html += '</div>';
 
       // Détail bonus (masqué par défaut, toggle au clic)
@@ -1647,7 +1727,7 @@ function chargerClassementJournee(j) {
         + (aSoumis2 ? (medals[rang] || rang) : '—') + '</div>'
         + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + '</div>'
         + '<div class="classement-pts">' + (aSoumis2 ? pts : '0') + '<span>pts</span></div>'
-        + (aTousScores && gain > 0 && aSoumis2
+        + (APP.argentActif && aTousScores && gain > 0 && aSoumis2
             ? '<div class="classement-gains">+' + gain + '€</div>'
             : '<div></div>')
         + '</div>';
@@ -1860,7 +1940,7 @@ async function ouvrirAdminJournee() {
       const dl        = snap.data().deadline || null;
       if (dl) {
         const d = new Date(dl);
-        deadlineActuelle = d.toISOString().slice(0,16);
+        deadlineActuelle = datetimeLocalValue(d);
       }
     }
   } catch(e) { console.error(e); }
@@ -1880,7 +1960,10 @@ async function ouvrirAdminJournee() {
 
   const datalistHtml = `<datalist id="eq-admin-list">${equipesL1.map(e => `<option value="${e}">`).join('')}</datalist>`;
 
-  const matchsHtml = matchsActuels.map((m, idx) => `
+  const matchsHtml = matchsActuels.map((m, idx) => {
+    const uneHeureAvant   = m.timestamp ? m.timestamp - 3600000 : null;
+    const encoreRouvrable = uneHeureAvant === null || Date.now() < uneHeureAvant;
+    return `
     <div style="background:var(--color-background-secondary);border-radius:8px;
                 padding:10px;margin-bottom:8px;border:1px solid var(--color-border-tertiary)">
       <div style="display:flex;align-items:center;gap:4px;margin-bottom:8px">
@@ -1896,7 +1979,7 @@ async function ouvrirAdminJournee() {
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <input type="datetime-local" class="profil-input" id="m${idx}-date"
-          value="${m.timestamp ? new Date(m.timestamp).toISOString().slice(0,16) : ''}"
+          value="${m.timestamp ? datetimeLocalValue(m.timestamp) : ''}"
           style="flex:1;font-size:12px;padding:6px 8px">
         <span style="font-size:11px;color:var(--gris);white-space:nowrap">Score :</span>
         <input type="number" id="m${idx}-sdom" min="0" max="20"
@@ -1909,7 +1992,16 @@ async function ouvrirAdminJournee() {
           style="width:36px;border:1px solid var(--color-border-tertiary);border-radius:6px;
                  text-align:center;font-size:13px;font-weight:700;padding:5px 2px">
       </div>
-    </div>`).join('');
+      <label style="display:flex;align-items:center;gap:6px;margin-top:8px;cursor:${encoreRouvrable?'pointer':'default'};
+                    opacity:${encoreRouvrable?'1':'0.45'}">
+        <input type="checkbox" id="m${idx}-reouvert" ${m.reouvert ? 'checked' : ''} ${encoreRouvrable?'':'disabled'}>
+        <span style="font-size:12px;color:var(--or);font-weight:500">
+          🔓 Rouvrir ce match (modifiable par les joueurs jusqu'à 1h avant le coup d'envoi)
+        </span>
+      </label>
+      ${!encoreRouvrable ? '<p style="font-size:11px;color:var(--gris);margin:2px 0 0 24px">Coup d\'envoi trop proche ou déjà passé — réouverture impossible</p>' : ''}
+    </div>`;
+  }).join('');
 
   document.getElementById('modal-body').innerHTML = `
     ${datalistHtml}
@@ -1962,7 +2054,7 @@ async function chargerDepuisAPI(j) {
     const sext = document.getElementById(`m${idx}-sext`);
     if (dom)  dom.value  = m.domicile  || '';
     if (ext)  ext.value  = m.exterieur || '';
-    if (date && m.timestamp) date.value = new Date(m.timestamp).toISOString().slice(0,16);
+    if (date && m.timestamp) date.value = datetimeLocalValue(m.timestamp);
     if (sdom && m.scoreReel?.dom !== undefined) sdom.value = m.scoreReel.dom ?? '';
     if (sext && m.scoreReel?.ext !== undefined) sext.value = m.scoreReel.ext ?? '';
   });
@@ -1971,7 +2063,7 @@ async function chargerDepuisAPI(j) {
   const premierTs = matchs.find(m => m.timestamp)?.timestamp;
   if (premierTs) {
     const dl = document.getElementById('admin-deadline');
-    if (dl) dl.value = new Date(premierTs - 3600000).toISOString().slice(0,16);
+    if (dl) dl.value = datetimeLocalValue(premierTs - 3600000);
   }
 
   btn.textContent = '✅ Rechargé';
@@ -1997,13 +2089,16 @@ async function validerJourneeManuelle(j) {
       ? { dom: parseInt(sdom), ext: parseInt(sext) }
       : null;
 
+    const reouvert = document.getElementById(`m${idx}-reouvert`)?.checked || false;
+
     matchs.push({
       domicile:  dom,
       exterieur: ext,
-      date:      dateV ? formaterDate(dateV.slice(0,10), dateV.slice(11) + ':00') : '',
+      date:      ts ? formaterDateFromDate(new Date(ts)) : '',
       timestamp: ts,
       scoreReel,
       idApi: null,
+      reouvert,
     });
   }
 
@@ -2337,5 +2432,54 @@ async function confirmerClotureSaisonSelectionnee() {
   } catch(e) {
     console.error(e);
     showToast('Erreur cloture', 'error');
+  }
+}
+
+// ── Sauvegarder un pronostic modifié sur un match rouvert par l'admin ────
+// Ne touche qu'à ce seul match, sans exiger de re-soumettre toute la grille.
+async function sauverPronoMatchReouvert(j, idx) {
+  if (!APP.joueurActif) return;
+  const d = document.getElementById(`sc-${idx}-dom`)?.value;
+  const e = document.getElementById(`sc-${idx}-ext`)?.value;
+  if (d === '' || e === '') { showToast('Veuillez renseigner un score pour ce match', 'error'); return; }
+
+  try {
+    const ref  = dbSaison('journees', `j${j}`);
+    const snap = await ref.get();
+    const existing = snap.exists ? snap.data() : {};
+    const matchs   = existing.matchs || [];
+    const match    = matchs[idx];
+    const now      = Date.now();
+
+    // Sécurité : vérifier côté client que le match est toujours modifiable
+    if (!match || match.reouvert !== true || !match.timestamp || now >= match.timestamp - 3600000) {
+      showToast('Ce match n\'est plus modifiable (délai dépassé ou réouverture retirée)', 'error');
+      chargerTab('grille');
+      return;
+    }
+
+    const soumissions = existing.soumissions || {};
+    if (!soumissions[APP.joueurActif.id]) soumissions[APP.joueurActif.id] = {};
+    soumissions[APP.joueurActif.id][idx] = { dom: parseInt(d), ext: parseInt(e) };
+
+    await ref.set({ ...existing, soumissions }, { merge: true });
+    showToast('✅ Pronostic mis à jour pour ce match', 'success');
+    chargerTab('grille');
+  } catch(err) {
+    console.error(err);
+    showToast('Erreur lors de la mise à jour', 'error');
+  }
+}
+
+// ── Activer/désactiver l'affichage de l'argent (persistant, pour tous) ────
+async function toggleArgentActif(val) {
+  try {
+    await APP.db.collection('config').doc('general').set({ argentActif: !!val }, { merge: true });
+    APP.argentActif = !!val;
+    showToast(val ? '💰 Affichage des gains activé' : '🚫 Affichage des gains désactivé', 'success');
+    chargerAdmin();
+  } catch(e) {
+    console.error(e);
+    showToast('Erreur lors de la mise à jour', 'error');
   }
 }
