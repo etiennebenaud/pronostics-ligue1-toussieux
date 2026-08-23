@@ -1017,6 +1017,18 @@ function joueursOrdreResultats() {
   return [moi, ...autres];
 }
 
+// ── Alias d'affichage court pour les noms d'équipe trop longs ─────
+// PUREMENT VISUEL : n'affecte jamais match.domicile/match.exterieur en base,
+// donc la récupération automatique des scores et des journées (matching par
+// nom complet contre ESPN/TheSportsDB) continue de fonctionner normalement.
+const ALIAS_AFFICHAGE_EQUIPE = {
+  'Paris Saint-Germain': 'PSG',
+  'Paris Saint Germain': 'PSG',
+};
+function nomCourtEquipe(nom) {
+  return ALIAS_AFFICHAGE_EQUIPE[nom] || nom || '?';
+}
+
 function renderResultats(j, data) {
   const matchs = data.matchs || genererMatchsVides();
 
@@ -1108,7 +1120,7 @@ function renderResultats(j, data) {
     const bgCellMatch = idx % 2 === 0 ? '#fff' : 'var(--color-background-secondary)';
     htmlFrozen += `<tr ${bgRow}>
       <td class="match-col" style="font-size:11px;background:${bgCellMatch}">
-        ${match.domicile||'?'} - ${match.exterieur||'?'}
+        ${nomCourtEquipe(match.domicile)} - ${nomCourtEquipe(match.exterieur)}
       </td>
       <td class="score-cell" style="white-space:nowrap;background:${bgCellMatch}">${scoreHtml}</td>
     </tr>`;
