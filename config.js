@@ -54,7 +54,8 @@ const CONFIG = {
     delaiAvantMatchMinutes:   60,   // Fermeture saisie X min avant 1er match
     journeeDefaut:             0,   // 0 = auto-détection
     revelerApresSoumission: true,   // Voir les autres dès qu'on a soumis
-    bonusSaisonDepuisJournee:  5,   // Bonus dispo à partir de la journée X
+    bonusSaisonDepuisJournee:  1,   // Bonus visible dès la journée X (1 = dès le début)
+    bonusSaisonAvantJournee:   6,   // Doit être soumis avant le début de cette journée
 
     // ── Soumissions tardives ─────────────────────────────
     // Points attribués aux joueurs n'ayant JAMAIS soumis après clôture :
