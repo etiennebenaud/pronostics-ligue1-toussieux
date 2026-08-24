@@ -476,6 +476,7 @@ function adminOuvrirJourneeSelectionnee() {
 function chargerGrille() {
   document.getElementById('tab-grille').innerHTML = `
     <div style="padding:16px">
+      <div id="bonus-reminder-banner"></div>
       <div class="journee-nav">
         <button onclick="changerJournee(-1)" ${APP.journeeActive<=1?'disabled':''}>‹</button>
         <div style="display:flex;flex-direction:column;align-items:center;gap:4px;position:relative">
@@ -504,6 +505,41 @@ function chargerGrille() {
   const unsub = dbSaison('journees', `j${APP.journeeActive}`)
     .onSnapshot(snap => renderGrille(APP.journeeActive, snap.exists ? snap.data() : {}));
   APP.ecouteurs.push(unsub);
+  injecterBanniereBonus();
+}
+
+// ── Bannière de rappel bonus (haut de la Grille) ────────────────
+// Affichée uniquement tant qu'il reste du temps et que le joueur n'a pas
+// encore soumis ses pronostics de fin de saison. Silencieuse une fois le
+// délai dépassé (l'onglet Bonus affiche alors le message "trop tard").
+async function injecterBanniereBonus() {
+  const zone = document.getElementById('bonus-reminder-banner');
+  if (!zone || !APP.joueurActif) return;
+  try {
+    const [bonusSnap, deadlineBonus] = await Promise.all([
+      dbSaison('bonus', 'saison').get(),
+      recupererDeadlineBonus(),
+    ]);
+    const bonusData = bonusSnap.exists ? bonusSnap.data() : {};
+    const dejaSoumis = !!bonusData[APP.joueurActif.id + '_soumis'];
+    const delaiDepasse = deadlineBonus && Date.now() >= deadlineBonus;
+
+    if (dejaSoumis || delaiDepasse) { zone.innerHTML = ''; return; }
+
+    const deadlineTxt = deadlineBonus
+      ? new Date(deadlineBonus).toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
+      : null;
+
+    zone.innerHTML = '<div onclick="chargerTab(\'bonus\')" style="cursor:pointer;'
+      + 'background:var(--or-l);border:1px solid var(--or);border-radius:10px;'
+      + 'padding:10px 12px;margin-bottom:12px;display:flex;align-items:center;gap:8px">'
+      + '<span style="font-size:18px">🏆</span>'
+      + '<span style="font-size:12px;color:#5A4300;line-height:1.4;flex:1">'
+      + '<strong>Pronostics de fin de saison à compléter</strong><br>'
+      + 'Avant le début de la Journée ' + CONFIG.regles.bonusSaisonAvantJournee
+      + (deadlineTxt ? ' (' + deadlineTxt + ')' : '') + '. Touchez pour y aller →'
+      + '</span></div>';
+  } catch(e) { zone.innerHTML = ''; }
 }
 
 function genOptionsJournees(active, total) {
@@ -1287,7 +1323,7 @@ function renderResultats(j, data) {
   const commentaireJournee = (data.commentaire || '').trim();
   if (commentaireJournee) {
     html += '<div class="card mt-12">';
-    html += '<div class="card-title">🗞️ LA GAZETTE DE TOUSSI\'PRONOS</div>';
+    html += '<div class="card-title" style="text-align:center">🗞️ LA GAZETTE DE TOUSSI\'PRONOS</div>';
     html += '<p style="font-size:13px;line-height:1.6;margin:0;white-space:pre-wrap">' + commentaireJournee + '</p>';
     html += '</div>';
   }
@@ -1436,6 +1472,13 @@ function chargerClassementSaison() {
   )).then(async snaps => {
     const totaux = Object.fromEntries(APP.joueurs.map(jo => [jo.id, { pts: 0, gains: 0 }]));
 
+    // ── Statistiques de saison par joueur (clic sur une ligne du classement) ──
+    const stats = Object.fromEntries(APP.joueurs.map(jo => [jo.id, {
+      totalPronosJoues: 0, bonsPronostics: 0, scoresExacts: 0,
+      journeesGagnees: 0, meilleureJournee: 0,
+      journeesJouees: 0, journeesSoumises: 0, penalitesRetard: 0,
+    }]));
+
     snaps.forEach((snap, snapIdx) => {
       if (!snap.exists) return;
       const snapData = snap.data();
@@ -1449,6 +1492,27 @@ function chargerClassementSaison() {
       }
       const statuts = snapData.statuts || {};
       const tousScores = matchs.length > 0 && matchs.every(m => m.scoreReel !== null);
+
+      // Accumulation des statistiques individuelles (indépendant du calcul des points)
+      const journeeAvecScores = matchs.some(m => m.scoreReel !== null);
+      if (journeeAvecScores) {
+        APP.joueurs.forEach(jo => {
+          stats[jo.id].journeesJouees++;
+          if (soumissions[jo.id]) stats[jo.id].journeesSoumises++;
+          if (statuts[jo.id]?.tardif) stats[jo.id].penalitesRetard++;
+        });
+      }
+      matchs.forEach((match, idxStat) => {
+        if (!match.scoreReel) return;
+        APP.joueurs.forEach(jo => {
+          const p = soumissions[jo.id]?.[idxStat];
+          if (!p || p.dom === '' || p.ext === '') return;
+          const pts = calculerPoints(p, match.scoreReel) || 0;
+          stats[jo.id].totalPronosJoues++;
+          if (pts > 0) stats[jo.id].bonsPronostics++;
+          if (pts === 5 || pts === 7) stats[jo.id].scoresExacts++;
+        });
+      });
 
       const ptsJ = Object.fromEntries(APP.joueurs.map(jo => [jo.id,
         matchs.reduce((acc, match, idx2) => {
@@ -1484,6 +1548,15 @@ function chargerClassementSaison() {
       if (sorted[0] && ptsJ[sorted[0].id] > 0) totaux[sorted[0].id].gains += CONFIG.gains.premier;
       if (sorted[1] && ptsJ[sorted[1].id] > 0) totaux[sorted[1].id].gains += CONFIG.gains.deuxieme;
       if (sorted[2] && ptsJ[sorted[2].id] > 0) totaux[sorted[2].id].gains += CONFIG.gains.troisieme;
+
+      // Journée(s) gagnée(s) : tous les joueurs à égalité du meilleur score du jour comptent
+      const maxPtsJournee = Math.max(...APP.joueurs.map(jo => ptsJ[jo.id] || 0));
+      if (maxPtsJournee > 0) {
+        APP.joueurs.forEach(jo => {
+          if (ptsJ[jo.id] === maxPtsJournee) stats[jo.id].journeesGagnees++;
+          if (ptsJ[jo.id] > stats[jo.id].meilleureJournee) stats[jo.id].meilleureJournee = ptsJ[jo.id];
+        });
+      }
     });
 
     // ── Points de base (sans bonus) ──────────────────────────
@@ -1649,15 +1722,15 @@ function chargerClassementSaison() {
       const hasDet   = Object.keys(det).length > 0;
 
       html += '<div class="classement-row' + (isMe ? ' moi' : '') + '"'
-        + ' style="cursor:' + ((avecBonus && hasDet) || totaux[jo.id].jokerDetail ? 'pointer' : 'default') + '"'
-        + (avecBonus && hasDet ? ' data-bonus-id="' + jo.id + '"  onclick="toggleBonusDetail(this.dataset.bonusId)"' : '') + ((avecBonus && hasDet) || totaux[jo.id].jokerDetail ? '' : '')
+        + ' style="cursor:pointer" data-joueur-id="' + jo.id + '"'
+        + ' onclick="toggleDetailJoueur(this.dataset.joueurId)"'
         + '>'
         + '<div class="rang-badge ' + (rang<=3?'rang-'+rang:'rang-other') + '">'
         + (rang<=3?['🥇','🥈','🥉'][i]:rang) + '</div>'
         + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom
         + (totaux[jo.id].jokerDetail ? ' <span title="Joker J' + totaux[jo.id].jokerDetail.journee
             + '" style="font-size:12px">🃏</span>' : '')
-        + (avecBonus && hasDet ? ' <span style="font-size:10px;color:var(--or)">▸</span>' : '')
+        + ' <span style="font-size:10px;color:var(--or)">▸</span>'
         + '</div>';
 
       if (avecBonus) {
@@ -1676,50 +1749,74 @@ function chargerClassementSaison() {
       else html += '<div></div>';
       html += '</div>';
 
-      // Détail bonus (masqué par défaut, toggle au clic)
-      // Panneau dépliable : bonus ET joker
+      // Panneau dépliable (toggle au clic sur la ligne) : stats de saison
+      // toujours présentes, + joker et bonus s'il y en a.
       const jokerDet = totaux[jo.id].jokerDetail;
-      const hasPanel = (avecBonus && hasDet) || jokerDet;
-      if (hasPanel) {
-        const detLabels = {
-          champion:   "Champion",
-          top3Ordre:  "Top 3 dans l'ordre",
-          top2sur3:   "2 équipes sur 3",
-          flop3Ordre: "Flop 3 dans l'ordre",
-          flop2sur3:  "2 relégués sur 3",
-          buteur:     "Meilleur buteur",
-          nbuts:      "Nombre de buts exact",
-        };
-        let detHtml = '<div id="bonus-det-' + jo.id + '" style="display:none;'
-          + 'background:var(--or-l);border-radius:8px;padding:8px 12px;'
-          + 'margin:-6px 8px 6px 8px;font-size:12px">';
+      const detLabels = {
+        champion:   "Champion",
+        top3Ordre:  "Top 3 dans l'ordre",
+        top2sur3:   "2 équipes sur 3",
+        flop3Ordre: "Flop 3 dans l'ordre",
+        flop2sur3:  "2 relégués sur 3",
+        buteur:     "Meilleur buteur",
+        nbuts:      "Nombre de buts exact",
+      };
+      let detHtml = '<div id="detail-joueur-' + jo.id + '" style="display:none;'
+        + 'background:var(--or-l);border-radius:8px;padding:10px 12px;'
+        + 'margin:-6px 8px 6px 8px;font-size:12px">';
 
-        // Ligne joker
-        if (jokerDet) {
-          detHtml += '<div style="display:flex;justify-content:space-between;padding:3px 0;'
-            + 'border-bottom:1px dashed var(--or);margin-bottom:4px">'
-            + '<span>🃏 Joker J' + jokerDet.journee + ' (×2)</span>'
-            + '<span style="font-weight:600;color:var(--or)">'
-            + jokerDet.ptsBase + ' → ' + jokerDet.ptsDouble + ' pts</span></div>';
-        }
-
-        // Lignes bonus
-        if (avecBonus && hasDet) {
-          Object.entries(det).forEach(([k, v]) => {
-            detHtml += '<div style="display:flex;justify-content:space-between;padding:2px 0">'
-              + '<span>🎯 ' + (detLabels[k] || k) + '</span>'
-              + '<span style="font-weight:600;color:var(--or)">+' + v + ' pts</span></div>';
-          });
-          detHtml += '<div style="border-top:1px solid var(--or);margin-top:4px;padding-top:4px;'
-            + 'display:flex;justify-content:space-between;font-weight:600">'
-            + '<span>Total bonus</span>'
-            + '<span style="color:var(--or)">+' + Object.values(det).reduce((a,b)=>a+b,0) + ' pts</span>'
-            + '</div>';
-        }
-
-        detHtml += '</div>';
-        html += detHtml;
+      // Ligne joker
+      if (jokerDet) {
+        detHtml += '<div style="display:flex;justify-content:space-between;padding:3px 0;'
+          + 'border-bottom:1px dashed var(--or);margin-bottom:4px">'
+          + '<span>🃏 Joker J' + jokerDet.journee + ' (×2)</span>'
+          + '<span style="font-weight:600;color:var(--or)">'
+          + jokerDet.ptsBase + ' → ' + jokerDet.ptsDouble + ' pts</span></div>';
       }
+
+      // Lignes bonus
+      if (avecBonus && hasDet) {
+        Object.entries(det).forEach(([k, v]) => {
+          detHtml += '<div style="display:flex;justify-content:space-between;padding:2px 0">'
+            + '<span>🎯 ' + (detLabels[k] || k) + '</span>'
+            + '<span style="font-weight:600;color:var(--or)">+' + v + ' pts</span></div>';
+        });
+        detHtml += '<div style="border-top:1px solid var(--or);margin-top:4px;padding-top:4px;'
+          + 'display:flex;justify-content:space-between;font-weight:600">'
+          + '<span>Total bonus</span>'
+          + '<span style="color:var(--or)">+' + Object.values(det).reduce((a,b)=>a+b,0) + ' pts</span>'
+          + '</div>';
+      }
+
+      // ── Statistiques de la saison ──────────────────────────
+      const s = stats[jo.id];
+      const pctBons = s.totalPronosJoues > 0
+        ? Math.round((s.bonsPronostics / s.totalPronosJoues) * 100)
+        : null;
+      const pctParticipation = s.journeesJouees > 0
+        ? Math.round((s.journeesSoumises / s.journeesJouees) * 100)
+        : null;
+
+      const statLigne = (icone, label, valeur) =>
+        '<div style="display:flex;justify-content:space-between;padding:3px 0">'
+        + '<span>' + icone + ' ' + label + '</span>'
+        + '<span style="font-weight:600">' + valeur + '</span></div>';
+
+      if (jokerDet || (avecBonus && hasDet)) {
+        detHtml += '<div style="border-top:1px dashed var(--or);margin:6px 0 4px"></div>';
+      }
+      detHtml += '<div style="font-size:10px;font-weight:600;color:var(--or);text-transform:uppercase;margin-bottom:2px">📊 Statistiques de la saison</div>';
+      detHtml += statLigne('🎯', 'Bons pronostics', pctBons !== null ? pctBons + '%' : '—');
+      detHtml += statLigne('🏅', 'Journées gagnées', s.journeesGagnees);
+      detHtml += statLigne('💯', 'Scores exacts', s.scoresExacts);
+      detHtml += statLigne('🔥', 'Meilleure journée', s.meilleureJournee + ' pts');
+      detHtml += statLigne('📝', 'Taux de participation', pctParticipation !== null ? pctParticipation + '%' : '—');
+      if (s.penalitesRetard > 0) {
+        detHtml += statLigne('⚠️', 'Soumissions tardives', s.penalitesRetard);
+      }
+
+      detHtml += '</div>';
+      html += detHtml;
     });
 
     html += '</div>';
@@ -1730,7 +1827,7 @@ function chargerClassementSaison() {
     const aCommentaireClassement = commentaireClassement.trim().length > 0;
     if (aCommentaireClassement || APP.estAdmin) {
       html += '<div class="card mt-12">';
-      html += '<div class="card-title">🗞️ LA GAZETTE DE TOUSSI\'PRONOS</div>';
+      html += '<div class="card-title" style="text-align:center">🗞️ LA GAZETTE DE TOUSSI\'PRONOS</div>';
       if (aCommentaireClassement) {
         html += '<p style="font-size:13px;line-height:1.6;margin:0;white-space:pre-wrap">'
           + commentaireClassement.trim() + '</p>';
@@ -1827,16 +1924,26 @@ function chargerClassementJournee(j) {
 
 
 // ── Bonus ─────────────────────────────────────────────────────
+// Visible dès la Journée 1. Doit être soumis avant le début de la journée
+// CONFIG.regles.bonusSaisonAvantJournee (deadline = celle de cette journée,
+// déjà calculée comme 1h avant son premier match).
+async function recupererDeadlineBonus() {
+  try {
+    const snap = await dbSaison('journees', `j${CONFIG.regles.bonusSaisonAvantJournee}`).get();
+    return snap.exists ? (snap.data().deadline || null) : null;
+  } catch(e) { return null; }
+}
+
 function chargerBonus() {
   const monId=APP.joueurActif?.id;
-  if(APP.journeeActive<CONFIG.regles.bonusSaisonDepuisJournee&&!APP.estAdmin) {
-    document.getElementById('tab-bonus').innerHTML=`<div style="padding:16px"><div class="empty-state"><div class="icon">🔒</div><p>Disponible à partir de la Journée ${CONFIG.regles.bonusSaisonDepuisJournee}.</p></div></div>`; return;
-  }
-  const unsub=dbSaison('bonus', 'saison').onSnapshot(snap=>renderBonus(snap.exists?snap.data():{},monId));
+  const unsub=dbSaison('bonus', 'saison').onSnapshot(async snap => {
+    const deadlineBonus = await recupererDeadlineBonus();
+    renderBonus(snap.exists?snap.data():{}, monId, deadlineBonus);
+  });
   APP.ecouteurs.push(unsub);
 }
 
-function renderBonus(data,monId) {
+function renderBonus(data,monId,deadlineBonus) {
   const container = document.getElementById('tab-bonus');
   if (!container) return;
 
@@ -1875,6 +1982,13 @@ function renderBonus(data,monId) {
            ' value="' + val + '" placeholder="' + placeholder + '" ' + ro + '></div>';
   }
 
+  // Date limite formatée (deadline de la journée bonusSaisonAvantJournee)
+  const now = Date.now();
+  const delaiDepasse = deadlineBonus && now >= deadlineBonus;
+  const deadlineTxt  = deadlineBonus
+    ? new Date(deadlineBonus).toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
+    : null;
+
   // Message statut
   var statusMsg;
   if (js) {
@@ -1882,15 +1996,22 @@ function renderBonus(data,monId) {
                 'padding:8px 12px;font-size:12px;color:var(--color-text-success);' +
                 'margin-bottom:14px;display:flex;align-items:center;gap:6px">' +
                 '&#10003; Vos pronostics sont soumis et verrouilles.</div>';
+  } else if (delaiDepasse) {
+    statusMsg = '<div style="background:var(--rouge-l);border-radius:8px;' +
+                'padding:8px 12px;font-size:12px;color:var(--rouge);' +
+                'margin-bottom:14px;display:flex;align-items:center;gap:6px">' +
+                '⏱️ Le délai est dépassé (Journée ' + CONFIG.regles.bonusSaisonAvantJournee +
+                ' déjà commencée) — les pronostics de fin de saison ne peuvent plus être soumis.</div>';
   } else {
-    statusMsg = '<p style="font-size:12px;color:var(--color-text-secondary);' +
-                'margin-bottom:14px;line-height:1.5">Disponible a partir de la Journee ' +
-                CONFIG.regles.bonusSaisonDepuisJournee +
-                ' - Soumis une seule fois, non modifiable</p>';
+    statusMsg = '<div style="background:var(--or-l);border:1px solid var(--or);border-radius:8px;' +
+                'padding:8px 12px;margin-bottom:14px;font-size:12px;color:#5A4300;line-height:1.5">' +
+                '⚠️ <strong>À compléter avant le début de la Journée ' + CONFIG.regles.bonusSaisonAvantJournee + '</strong>' +
+                (deadlineTxt ? ' (' + deadlineTxt + ')' : '') +
+                '. Soumis une seule fois, non modifiable ensuite.</div>';
   }
 
-  // Bouton soumettre
-  var btnSoumettre = (!js && monId)
+  // Bouton soumettre (désactivé une fois le délai dépassé)
+  var btnSoumettre = (!js && monId && !delaiDepasse)
     ? '<button class="btn-soumettre" onclick="soumettreBonus()" style="margin-top:4px">' +
       '&#10003; Soumettre mes pronostics de fin de saison</button>'
     : '';
@@ -1949,6 +2070,12 @@ function renderBonus(data,monId) {
 
 async function soumettreBonus() {
   if(!APP.joueurActif||!confirm('Soumettre ? Non modifiable ensuite.')) return;
+  const deadlineBonus = await recupererDeadlineBonus();
+  if (deadlineBonus && Date.now() >= deadlineBonus) {
+    showToast('⏱️ Trop tard, la Journée ' + CONFIG.regles.bonusSaisonAvantJournee + ' a déjà commencé', 'error');
+    chargerTab('bonus');
+    return;
+  }
   try {
     await dbSaison('bonus', 'saison').set({
       [APP.joueurActif.id]: {
@@ -2604,4 +2731,11 @@ async function toggleArgentActif(val) {
     console.error(e);
     showToast('Erreur lors de la mise à jour', 'error');
   }
+}
+
+// ── Dépliage du panneau détail d'un joueur dans le classement ──
+function toggleDetailJoueur(joueurId) {
+  const panel = document.getElementById('detail-joueur-' + joueurId);
+  if (!panel) return;
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
 }
