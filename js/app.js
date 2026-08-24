@@ -1580,8 +1580,12 @@ function chargerClassementSaison() {
         classementReel = (dStand.children?.[0]?.standings?.entries || [])
           .map((e, i) => ({ rang: i+1, nom: e.team?.displayName, abbr: e.team?.abbreviation }));
 
-        // Charger meilleur buteur depuis le scoreboard
-        const rScore = await fetch('https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard?dates=20250801-20260531&limit=500');
+        // Charger meilleur buteur depuis le scoreboard — bornes dynamiques sur la
+        // saison AFFICHÉE (pas une saison codée en dur), ex: 2026/2027 → 20260801-20270601
+        const saisonButeur = saisonApiFormat(APP.saisonAffichee || CONFIG.saison);
+        const [anneeDebutB] = saisonButeur.split('-');
+        const anneeFinB = parseInt(anneeDebutB) + 1;
+        const rScore = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard?dates=${anneeDebutB}0801-${anneeFinB}0601&limit=500`);
         const dScore = await rScore.json();
         const scorers = {};
         (dScore.events || []).forEach(ev => {
