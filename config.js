@@ -43,8 +43,8 @@ const CONFIG = {
     top3Desordre: 25,
     top2sur3:     15,
     champion:     15,
-    flop3Ordre:   25,
-    flop2sur3:    15,
+    flop2Ordre:   25,   // 17e ET 18e trouvés, dans le bon ordre
+    flop2Desordre: 15,  // 17e ET 18e trouvés, mais dans le désordre
     buteur:       15,
     nbuts:        10,
   },
