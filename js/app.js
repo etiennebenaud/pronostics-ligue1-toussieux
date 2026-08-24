@@ -537,7 +537,7 @@ async function injecterBanniereBonus() {
       + '<span style="font-size:12px;color:#5A4300;line-height:1.4;flex:1">'
       + '<strong>Pronostics de fin de saison à compléter</strong><br>'
       + 'Avant le début de la Journée ' + CONFIG.regles.bonusSaisonAvantJournee
-      + (deadlineTxt ? ' (' + deadlineTxt + ')' : '') + '. Touchez pour y aller →'
+      + (deadlineTxt ? ' (' + deadlineTxt + ')' : '') + '. On y va →'
       + '</span></div>';
   } catch(e) { zone.innerHTML = ''; }
 }
@@ -1323,7 +1323,7 @@ function renderResultats(j, data) {
   const commentaireJournee = (data.commentaire || '').trim();
   if (commentaireJournee) {
     html += '<div class="card mt-12">';
-    html += '<div class="card-title" style="text-align:center">🗞️ LA GAZETTE DE TOUSSI\'PRONOS</div>';
+    html += '<div class="card-title" style="justify-content:center">🗞️ LA GAZETTE DE TOUSSI\'PRONOS</div>';
     html += '<p style="font-size:13px;line-height:1.6;margin:0;white-space:pre-wrap">' + commentaireJournee + '</p>';
     html += '</div>';
   }
@@ -1595,8 +1595,9 @@ function chargerClassementSaison() {
         const topEntry = Object.entries(scorers).sort((a,b) => b[1]-a[1])[0];
         buteurReel = topEntry ? { nom: topEntry[0], buts: topEntry[1] } : null;
 
-        const top3Reel  = classementReel.slice(0, 3).map(e => e.nom);
-        const flop3Reel = classementReel.slice(-3).map(e => e.nom);
+        const top3Reel = classementReel.slice(0, 3).map(e => e.nom);
+        // 17e et 18e (avant-dernier, dernier), dans cet ordre précis
+        const flop2Reel = classementReel.slice(-2).map(e => e.nom); // [17e, 18e]
 
         // Normaliser un nom pour comparaison floue
         const norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]/g,' ').trim();
@@ -1637,15 +1638,18 @@ function chargerClassementSaison() {
             totaux[jo.id].pts += CONFIG.bonusSaison.top2sur3;
           }
 
-          // Flop 3
-          const flopProno = [b.flop1, b.flop2, b.flop3];
-          const matchesFlop = flopProno.filter(f => f && flop3Reel.some(r => matchNom(f, r))).length;
-          if (matchesFlop === 3) {
-            det.flop3Ordre = CONFIG.bonusSaison.flop3Ordre;
-            totaux[jo.id].pts += CONFIG.bonusSaison.flop3Ordre;
-          } else if (matchesFlop >= 2) {
-            det.flop2sur3 = CONFIG.bonusSaison.flop2sur3;
-            totaux[jo.id].pts += CONFIG.bonusSaison.flop2sur3;
+          // 17e et 18e : 25 pts si les deux dans le bon ordre, 15 pts si trouvés mais dans le désordre
+          const flopProno   = [b.flop1, b.flop2]; // [prono 17e, prono 18e]
+          const nbFlopTrouves = flopProno.filter(f => f && flop2Reel.some(r => matchNom(f, r))).length;
+          if (nbFlopTrouves === 2) {
+            const ordreCorrect = matchNom(b.flop1, flop2Reel[0]) && matchNom(b.flop2, flop2Reel[1]);
+            if (ordreCorrect) {
+              det.flop2Ordre = CONFIG.bonusSaison.flop2Ordre;
+              totaux[jo.id].pts += CONFIG.bonusSaison.flop2Ordre;
+            } else {
+              det.flop2Desordre = CONFIG.bonusSaison.flop2Desordre;
+              totaux[jo.id].pts += CONFIG.bonusSaison.flop2Desordre;
+            }
           }
 
           // Buteur
@@ -1688,12 +1692,12 @@ function chargerClassementSaison() {
     // Bandeau ESPN (classement réel + buteur)
     if (avecBonus && classementReel && classementReel.length > 0) {
       const top3 = classementReel.slice(0,3).map(e => e.nom).join(', ');
-      const flop3 = classementReel.slice(-3).map(e => e.nom).join(', ');
+      const flop2Aff = classementReel.slice(-2).map(e => e.nom).join(', ');
       html += '<div style="background:var(--bleu-l);border-radius:var(--border-radius-md);'
         + 'padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--bleu)">'
         + '<div style="margin-bottom:4px"><strong>🏆 Classement ESPN :</strong></div>'
         + '<div>Top 3 : <strong>' + top3 + '</strong></div>'
-        + '<div>Flop 3 : <strong>' + flop3 + '</strong></div>'
+        + '<div>17e et 18e : <strong>' + flop2Aff + '</strong></div>'
         + (buteurReel ? '<div>⚽ Meilleur buteur : <strong>' + buteurReel.nom + '</strong> (' + buteurReel.buts + ' buts)</div>' : '')
         + '</div>';
     } else if (avecBonus && espnErreur) {
@@ -1730,7 +1734,7 @@ function chargerClassementSaison() {
         + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom
         + (totaux[jo.id].jokerDetail ? ' <span title="Joker J' + totaux[jo.id].jokerDetail.journee
             + '" style="font-size:12px">🃏</span>' : '')
-        + ' <span style="font-size:10px;color:var(--or)">▸</span>'
+        + ' <span id="arrow-' + jo.id + '" style="display:inline-block;font-size:15px;font-weight:700;color:var(--orange);transition:transform .2s ease;margin-left:2px">▸</span>'
         + '</div>';
 
       if (avecBonus) {
@@ -1753,13 +1757,14 @@ function chargerClassementSaison() {
       // toujours présentes, + joker et bonus s'il y en a.
       const jokerDet = totaux[jo.id].jokerDetail;
       const detLabels = {
-        champion:   "Champion",
-        top3Ordre:  "Top 3 dans l'ordre",
-        top2sur3:   "2 équipes sur 3",
-        flop3Ordre: "Flop 3 dans l'ordre",
-        flop2sur3:  "2 relégués sur 3",
-        buteur:     "Meilleur buteur",
-        nbuts:      "Nombre de buts exact",
+        champion:     "Champion",
+        top3Ordre:    "Top 3 dans l'ordre",
+        top3Desordre: "Top 3 dans le désordre",
+        top2sur3:     "2 équipes sur 3",
+        flop2Ordre:   "17e et 18e dans l'ordre",
+        flop2Desordre:"17e et 18e dans le désordre",
+        buteur:       "Meilleur buteur",
+        nbuts:        "Nombre de buts exact",
       };
       let detHtml = '<div id="detail-joueur-' + jo.id + '" style="display:none;'
         + 'background:var(--or-l);border-radius:8px;padding:10px 12px;'
@@ -1827,7 +1832,7 @@ function chargerClassementSaison() {
     const aCommentaireClassement = commentaireClassement.trim().length > 0;
     if (aCommentaireClassement || APP.estAdmin) {
       html += '<div class="card mt-12">';
-      html += '<div class="card-title" style="text-align:center">🗞️ LA GAZETTE DE TOUSSI\'PRONOS</div>';
+      html += '<div class="card-title" style="justify-content:center">🗞️ LA GAZETTE DE TOUSSI\'PRONOS</div>';
       if (aCommentaireClassement) {
         html += '<p style="font-size:13px;line-height:1.6;margin:0;white-space:pre-wrap">'
           + commentaireClassement.trim() + '</p>';
@@ -2035,18 +2040,14 @@ function renderBonus(data,monId,deadlineBonus) {
   html += inpF('b-top3', '&#129353; 3eme', 'Equipe');
   html += '</div></div>';
 
-  // FLOP 3
+  // 17e ET 18e (relégation)
   html += '<div style="margin-bottom:16px">';
-  html += secHdr("&#128308;", "Relegation - Flop 3", "jusqu'à 25 pts",
+  html += secHdr("&#128308;", "17e et 18e (relégation)", "jusqu'à 25 pts",
                  "var(--color-background-danger)", "var(--color-text-danger)");
-  html += '<div style="display:flex;flex-direction:column;gap:8px">';
   html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
-  html += inpF('b-flop1', 'Relegue 1', 'Equipe');
-  html += inpF('b-flop2', 'Relegue 2', 'Equipe');
-  html += '</div>';
-  html += '<div style="max-width:calc(50% - 4px)">';
-  html += inpF('b-flop3', 'Relegue 3', 'Equipe');
-  html += '</div></div></div>';
+  html += inpF('b-flop1', '17e (avant-dernier)', 'Equipe');
+  html += inpF('b-flop2', '18e (dernier)', 'Equipe');
+  html += '</div></div>';
 
   // BUTEUR
   html += '<div style="margin-bottom:16px">';
@@ -2060,7 +2061,7 @@ function renderBonus(data,monId,deadlineBonus) {
   html += '<div style="display:flex;flex-direction:column;gap:2px">';
   html += '<span style="font-size:11px;color:var(--color-text-secondary)">Buts</span>';
   html += '<input id="b-nbuts" type="number" class="bonus-input" value="' + (mb.nbuts || '') + '"' +
-          ' placeholder="22" min="0" max="60" ' + ro + ' style="font-size:13px;text-align:center"></div>';
+          ' placeholder="22" min="0" ' + ro + ' style="font-size:13px;text-align:center"></div>';
   html += '</div></div>';
 
   html += btnSoumettre + '</div>';
@@ -2081,7 +2082,7 @@ async function soumettreBonus() {
       [APP.joueurActif.id]: {
         champion:document.getElementById('b-champion').value, top2:document.getElementById('b-top2').value,
         top3:document.getElementById('b-top3').value, flop1:document.getElementById('b-flop1').value,
-        flop2:document.getElementById('b-flop2').value, flop3:document.getElementById('b-flop3').value,
+        flop2:document.getElementById('b-flop2').value,
         buteur:document.getElementById('b-buteur').value, nbuts:document.getElementById('b-nbuts').value,
       },
       [`${APP.joueurActif.id}_soumis`]:true,
@@ -2736,6 +2737,9 @@ async function toggleArgentActif(val) {
 // ── Dépliage du panneau détail d'un joueur dans le classement ──
 function toggleDetailJoueur(joueurId) {
   const panel = document.getElementById('detail-joueur-' + joueurId);
+  const arrow = document.getElementById('arrow-' + joueurId);
   if (!panel) return;
-  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  const estOuvert = panel.style.display === 'block';
+  panel.style.display = estOuvert ? 'none' : 'block';
+  if (arrow) arrow.style.transform = estOuvert ? 'rotate(0deg)' : 'rotate(90deg)';
 }
