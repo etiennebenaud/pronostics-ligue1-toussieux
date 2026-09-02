@@ -77,7 +77,8 @@ async function chargerAdminJoueurs() {
   const liste = snap.exists ? (snap.data().liste || []) : [];
 
   const emojis = ['⚽','🦁','🐺','🦊','🐯','🦅','🦋','⚡','🌟','🔥',
-                  '💎','🎯','🏆','🎭','🦄','🎸','🚀','🌈','⚓','🎪'];
+                  '💎','🎯','🏆','🎭','🦄','🎸','🚀','🌈','⚓','🎪',
+                  '🍳','👨‍🍳','🍕','🔪','🐸','🦉','🐨','🐧','🎮','🎲','🌶️','🏅'];
 
   const equipesL1 = ['Paris SG','Marseille','Lyon','Monaco','Lille','Lens',
     'Rennes','Nice','Brest','Nantes','Strasbourg','Reims',
