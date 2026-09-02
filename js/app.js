@@ -612,6 +612,23 @@ function changerJournee(d) {
 
 // ── Points par défaut pour les non-soumis ────────────────────
 // Appelé après clôture d'une journée, pour les joueurs sans soumission
+// ── Départage à points égaux : validation la plus tôt gagne ────
+// (heure + jour de soumission de la grille, via statuts[joueurId].soumisAt).
+// Les joueurs n'ayant pas soumis passent après tous ceux qui ont soumis,
+// à points égaux entre eux.
+function comparerAvecDepartage(ptsMap, statutsMap) {
+  return (a, b) => {
+    const diff = (ptsMap[b.id] || 0) - (ptsMap[a.id] || 0);
+    if (diff !== 0) return diff;
+    const soumisA = statutsMap?.[a.id]?.soumisAt;
+    const soumisB = statutsMap?.[b.id]?.soumisAt;
+    if (soumisA == null && soumisB == null) return 0;
+    if (soumisA == null) return 1;
+    if (soumisB == null) return -1;
+    return soumisA - soumisB; // le plus petit timestamp (= soumis le plus tôt) d'abord
+  };
+}
+
 function calculerPointsDefaut(totauxSoumettants) {
   const regle = CONFIG.regles.sansPronostic || 'demi_minimum';
   const pts   = Object.values(totauxSoumettants).filter(p => p > 0);
@@ -1254,7 +1271,7 @@ function renderResultats(j, data) {
   // Si les scores ne sont pas encore tous là, on affiche quand même avec les pts actuels
 
   const tousJoueursTriees = APP.joueurs.slice()
-    .sort((a, b) => (totaux[b.id] || 0) - (totaux[a.id] || 0));
+    .sort(comparerAvecDepartage(totaux, data.statuts));
 
   // Toujours afficher le classement (même journée vide = tous à 0)
   {
@@ -1543,7 +1560,7 @@ function chargerClassementSaison() {
         APP.joueurs.forEach(jo => { if (!soumissions[jo.id]) ptsJ[jo.id] = def; });
       }
 
-      const sorted = APP.joueurs.slice().sort((a, b) => ptsJ[b.id] - ptsJ[a.id]);
+      const sorted = APP.joueurs.slice().sort(comparerAvecDepartage(ptsJ, statuts));
       APP.joueurs.forEach(jo => { totaux[jo.id].pts += ptsJ[jo.id]; });
       if (sorted[0] && ptsJ[sorted[0].id] > 0) totaux[sorted[0].id].gains += CONFIG.gains.premier;
       if (sorted[1] && ptsJ[sorted[1].id] > 0) totaux[sorted[1].id].gains += CONFIG.gains.deuxieme;
@@ -1878,6 +1895,8 @@ function chargerClassementJournee(j) {
       });
     }
 
+    const statuts = snapData.statuts || {};
+
     // Calculer les points de chaque joueur pour cette journée
     const ptsJ  = Object.fromEntries(APP.joueurs.map(jo => [jo.id,
       matchs.reduce((acc, match, idx) => {
@@ -1885,10 +1904,10 @@ function chargerClassementJournee(j) {
         return acc + (p && match.scoreReel ? calculerPoints(p, match.scoreReel) || 0 : 0);
       }, 0)]));
 
-    // Trier
-    // Trier tous les joueurs (soumis ou non) par points décroissants
+    // Trier tous les joueurs (soumis ou non) par points décroissants,
+    // et à égalité, par heure de soumission de la grille (le plus tôt gagne)
     const sorted = APP.joueurs.slice()
-      .sort((a, b) => (ptsJ[b.id] || 0) - (ptsJ[a.id] || 0));
+      .sort(comparerAvecDepartage(ptsJ, statuts));
 
     const monId   = APP.joueurActif?.id;
     const aTousScores = matchs.length > 0 && matchs.every(m => m.scoreReel !== null);
