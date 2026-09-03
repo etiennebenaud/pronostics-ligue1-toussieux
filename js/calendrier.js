@@ -115,24 +115,15 @@ async function chargerCacheESPN(saisonKey) {
     const data = await resp.json();
     const events = (data.events || []).sort((a, b) => a.date.localeCompare(b.date));
 
-    // Grouper en journées (écart > 4 jours = nouvelle journée)
+    // Grouper en journées par paquets de taille fixe (CONFIG.nbMatchsParJournee).
+    // Plus robuste que l'ancienne heuristique "écart > 4 jours", qui fusionnait
+    // à tort deux journées quand le calendrier réel (rediffusion TV, calendrier
+    // européen, etc.) resserre l'écart habituel entre deux journées.
+    const taillePaquet = CONFIG.nbMatchsParJournee || 9;
     const journees = {};
-    let current = [], numJ = 1, prevDate = null;
-
-    for (const ev of events) {
-      const d = new Date(ev.date);
-      if (prevDate && (d - prevDate) > 4 * 86400000) {
-        if (current.length > 0) {
-          journees[numJ] = current.map(e => espnEventToMatch(e));
-          numJ++;
-          current = [];
-        }
-      }
-      current.push(ev);
-      prevDate = d;
-    }
-    if (current.length > 0) {
-      journees[numJ] = current.map(e => espnEventToMatch(e));
+    for (let i = 0; i < events.length; i += taillePaquet) {
+      const numJ = Math.floor(i / taillePaquet) + 1;
+      journees[numJ] = events.slice(i, i + taillePaquet).map(e => espnEventToMatch(e));
     }
 
     window._espnCalCache = { saison: saisonKey, journees };

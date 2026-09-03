@@ -2305,42 +2305,68 @@ async function sauverCommentaireClassement(saisonKeyVal) {
 }
 
 // Recharger une journée depuis l'API et remplir les champs
+// Recharge date/score depuis l'API, en retrouvant chaque match par NOM
+// D'ÉQUIPE (jamais par position) — pour ne jamais désynchroniser l'ordre
+// des matchs affichés avec les pronostics déjà soumis, qui sont, eux,
+// stockés par position (index).
 async function chargerDepuisAPI(j) {
   const saisonInput = CONFIG.saison;
   const btn = event.target;
   btn.textContent = '⏳ Chargement...';
   btn.disabled = true;
 
-  const matchs = await fetchJourneeAPI(j, saisonInput);
-  if (!matchs || matchs.length === 0) {
+  const matchsAPI = await fetchJourneeAPI(j, saisonInput);
+  if (!matchsAPI || matchsAPI.length === 0) {
     showToast(`Journée ${j} non trouvée sur TheSportsDB`, 'error');
     btn.textContent = '🔄 Recharger depuis API';
     btn.disabled = false;
     return;
   }
 
-  matchs.forEach((m, idx) => {
-    const dom  = document.getElementById(`m${idx}-dom`);
-    const ext  = document.getElementById(`m${idx}-ext`);
+  let nbTrouves = 0, nbIntrouvables = 0;
+  const utilises = new Set();
+
+  for (let idx = 0; idx < CONFIG.nbMatchsParJournee; idx++) {
+    const domInput = document.getElementById(`m${idx}-dom`);
+    const extInput = document.getElementById(`m${idx}-ext`);
+    if (!domInput || !domInput.value) continue; // slot vide, rien à faire
+
+    // Retrouver, parmi les matchs API pas encore utilisés, celui qui
+    // correspond à CE match déjà affiché (par nom d'équipe, jamais par position)
+    const trouve = matchsAPI.find((m, i) =>
+      !utilises.has(i) &&
+      equipesCorrespondent(domInput.value, m.domicile) &&
+      equipesCorrespondent(extInput.value, m.exterieur)
+    );
+
+    if (!trouve) { nbIntrouvables++; continue; }
+    utilises.add(matchsAPI.indexOf(trouve));
+    nbTrouves++;
+
     const date = document.getElementById(`m${idx}-date`);
     const sdom = document.getElementById(`m${idx}-sdom`);
     const sext = document.getElementById(`m${idx}-sext`);
-    if (dom)  dom.value  = m.domicile  || '';
-    if (ext)  ext.value  = m.exterieur || '';
-    if (date && m.timestamp) date.value = datetimeLocalValue(m.timestamp);
-    if (sdom && m.scoreReel?.dom !== undefined) sdom.value = m.scoreReel.dom ?? '';
-    if (sext && m.scoreReel?.ext !== undefined) sext.value = m.scoreReel.ext ?? '';
-  });
+    if (date && trouve.timestamp) date.value = datetimeLocalValue(trouve.timestamp);
+    if (sdom && trouve.scoreReel?.dom !== undefined) sdom.value = trouve.scoreReel.dom ?? '';
+    if (sext && trouve.scoreReel?.ext !== undefined) sext.value = trouve.scoreReel.ext ?? '';
+  }
 
-  // Auto-remplir deadline = 1h avant le 1er match
-  const premierTs = matchs.find(m => m.timestamp)?.timestamp;
-  if (premierTs) {
+  // Auto-remplir deadline = 1h avant le 1er match (parmi ceux retrouvés)
+  const premiersTs = Array.from({length: CONFIG.nbMatchsParJournee}, (_, idx) =>
+    document.getElementById(`m${idx}-date`)?.value
+  ).filter(Boolean).map(v => new Date(v).getTime());
+  if (premiersTs.length > 0) {
     const dl = document.getElementById('admin-deadline');
-    if (dl) dl.value = datetimeLocalValue(premierTs - 3600000);
+    if (dl) dl.value = datetimeLocalValue(Math.min(...premiersTs) - 3600000);
   }
 
   btn.textContent = '✅ Rechargé';
-  showToast(`Journée ${j} chargée depuis TheSportsDB`, 'success');
+  btn.disabled = false;
+  if (nbIntrouvables > 0) {
+    showToast(`${nbTrouves} match(s) mis à jour, ${nbIntrouvables} non retrouvé(s) sur l'API — vérifiez les noms d'équipe`, 'warning');
+  } else {
+    showToast(`${nbTrouves} match(s) mis à jour (dates/scores uniquement, ordre préservé)`, 'success');
+  }
 }
 
 // Valider la journée saisie manuellement
@@ -2501,6 +2527,33 @@ function gererAutoRefreshESPN(j, data) {
   }
 }
 
+// ── Correspondance entre deux noms d'équipe (alias, casse, accents) ──
+// Fonction partagée : utilisée pour retrouver un match par identité plutôt
+// que par position, afin de ne jamais désynchroniser matchs et pronostics.
+const ALIAS_EQUIPES_TOUSSIPRONOS = {
+  'rennes':             'stade rennais',
+  'paris sg':           'paris saint germain',
+  'monaco':             'as monaco',
+  'auxerre':            'aj auxerre',
+  'le havre':           'le havre ac',
+  'paris saint germain':'paris saint germain',
+};
+function normaliserNomEquipe(s) {
+  return (s || '').toLowerCase().normalize('NFD')
+    .replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+}
+function equipesCorrespondent(nomA, nomB) {
+  const na = normaliserNomEquipe(nomA);
+  const nb = normaliserNomEquipe(nomB);
+  if (!na || !nb) return false;
+  if (na === nb || na.includes(nb) || nb.includes(na)) return true;
+  const naAlias = ALIAS_EQUIPES_TOUSSIPRONOS[na] || na;
+  if (naAlias === nb || naAlias.includes(nb) || nb.includes(naAlias)) return true;
+  const wa = na.split(' ').filter(w => w.length > 2);
+  const wb = nb.split(' ').filter(w => w.length > 2);
+  return wa.some(w => wb.some(w2 => w.includes(w2) || w2.includes(w)));
+}
+
 async function rafraichirScoresESPN(j, silencieux) {
   const btn = document.getElementById('btn-refresh-scores');
   if (!silencieux && btn) {
@@ -2538,33 +2591,8 @@ async function rafraichirScoresESPN(j, silencieux) {
       return;
     }
 
-    // Normaliser un nom d'équipe pour comparaison
-    // Alias : noms TheSportsDB → noms ESPN (sens unique uniquement)
-    const ALIAS_TO_ESPN = {
-      'rennes':             'stade rennais',
-      'paris sg':           'paris saint germain',
-      'monaco':             'as monaco',
-      'auxerre':            'aj auxerre',
-      'le havre':           'le havre ac',
-      'paris saint germain':'paris saint germain',
-    };
-
-    const normBase = s => (s || '').toLowerCase().normalize('NFD')
-      .replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
-
-    const teamsMatch = (firebaseNom, espnNom) => {
-      const nf = normBase(firebaseNom);
-      const ne = normBase(espnNom);
-      // Correspondance directe
-      if (nf === ne || nf.includes(ne) || ne.includes(nf)) return true;
-      // Alias Firebase → ESPN (sens unique)
-      const nfAlias = ALIAS_TO_ESPN[nf] || nf;
-      if (nfAlias === ne || nfAlias.includes(ne) || ne.includes(nfAlias)) return true;
-      // Matching par mots significatifs
-      const wf = nf.split(' ').filter(w => w.length > 2);
-      const we = ne.split(' ').filter(w => w.length > 2);
-      return wf.some(w => we.some(w2 => w.includes(w2) || w2.includes(w)));
-    };
+    // Correspondance par nom d'équipe : fonction partagée (voir plus haut)
+    const teamsMatch = equipesCorrespondent;
 
     let mises_a_jour = 0;
     const matchsUpdated = matchs.map(match => {
