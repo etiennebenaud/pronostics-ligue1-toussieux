@@ -367,6 +367,18 @@ function chargerAdmin() {
         <p class="text-sm text-muted">Ajouter, modifier ou retirer des participants.</p>
       </div>
 
+      <!-- ── Rafraîchir les horaires (toutes journées à venir) ── -->
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title" style="margin-bottom:8px">🕐 Horaires des matchs</div>
+        <button class="btn-secondary" id="btn-refresh-horaires" onclick="rafraichirHorairesTouteSaison()" style="width:100%">
+          🔄 Rafraîchir les horaires
+        </button>
+        <p class="text-sm text-muted">
+          Met à jour date/heure de tous les matchs des journées pas encore jouées, en cas de changement TV.
+          Ne touche jamais aux noms d'équipe, à l'ordre, ni aux pronostics déjà soumis. Les scores ne sont pas concernés (voir "Rafraîchir les scores" dans Résultats).
+        </p>
+      </div>
+
       <!-- ── Argent en jeu ── -->
       <div class="card" style="margin-bottom:12px">
         <div class="card-title" style="margin-bottom:8px">💰 Argent en jeu</div>
@@ -2793,4 +2805,81 @@ function toggleDetailJoueur(joueurId) {
   const estOuvert = panel.style.display === 'block';
   panel.style.display = estOuvert ? 'none' : 'block';
   if (arrow) arrow.style.transform = estOuvert ? 'rotate(0deg)' : 'rotate(90deg)';
+}
+
+// ── Rafraîchir les horaires de TOUTES les journées à venir ──────
+// Ne touche jamais aux noms d'équipe, à l'ordre, ni aux scores/pronostics.
+// Retrouve chaque match par nom d'équipe (equipesCorrespondent), sur
+// l'ensemble du calendrier ESPN de la saison — pas seulement le paquet
+// correspondant au numéro de journée, pour rester robuste même si un
+// match a été déplacé d'une journée à l'autre par la LFP.
+async function rafraichirHorairesTouteSaison() {
+  const btn = document.getElementById('btn-refresh-horaires');
+  const texteOriginal = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '⏳ Chargement du calendrier ESPN...';
+
+  try {
+    const saisonKey = saisonApiFormat(CONFIG.saison);
+    window._espnCalCache = null; // forcer un rechargement frais, pas l'ancien cache
+    await chargerCacheESPN(saisonKey);
+    const tousLesEvenements = Object.values(window._espnCalCache?.journees || {}).flat();
+
+    if (tousLesEvenements.length === 0) {
+      showToast('Aucune donnée ESPN récupérée, réessayez plus tard', 'error');
+      return;
+    }
+
+    btn.innerHTML = '⏳ Mise à jour des journées...';
+    const maintenant = Date.now();
+    let journeesModifiees = 0, matchsModifies = 0, journeesVerifiees = 0;
+
+    for (let j = 1; j <= CONFIG.nbJournees; j++) {
+      const ref = dbSaison('journees', `j${j}`);
+      const snap = await ref.get();
+      if (!snap.exists) continue;
+      const data = snap.data();
+      const matchs = data.matchs || [];
+      if (matchs.length === 0) continue;
+
+      // Ignorer les journées déjà passées (deadline dépassée)
+      if (data.deadline && data.deadline < maintenant) continue;
+      journeesVerifiees++;
+
+      const utilises = new Set();
+      let modifie = false;
+
+      const nouveauxMatchs = matchs.map(m => {
+        if (!m.domicile || !m.exterieur) return m;
+        const trouve = tousLesEvenements.find((e, i) =>
+          !utilises.has(i) &&
+          equipesCorrespondent(m.domicile, e.domicile) &&
+          equipesCorrespondent(m.exterieur, e.exterieur)
+        );
+        if (!trouve) return m;
+        utilises.add(tousLesEvenements.indexOf(trouve));
+        if (m.timestamp === trouve.timestamp) return m; // déjà à jour
+
+        modifie = true;
+        matchsModifies++;
+        return { ...m, date: trouve.date, timestamp: trouve.timestamp };
+      });
+
+      if (modifie) {
+        await ref.set({ matchs: nouveauxMatchs }, { merge: true });
+        journeesModifiees++;
+      }
+    }
+
+    showToast(
+      `✅ ${journeesVerifiees} journée(s) à venir vérifiée(s), ${journeesModifiees} mise(s) à jour (${matchsModifies} horaire${matchsModifies>1?'s':''} modifié${matchsModifies>1?'s':''})`,
+      'success'
+    );
+  } catch (e) {
+    console.error('rafraichirHorairesTouteSaison:', e);
+    showToast('Erreur lors du rafraîchissement des horaires', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = texteOriginal;
+  }
 }
