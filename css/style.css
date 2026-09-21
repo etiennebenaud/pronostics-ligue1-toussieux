@@ -327,6 +327,15 @@ body {
   min-width: 40px; text-align: right;
 }
 .classement-pts span { font-size: 11px; font-weight: 500; color: var(--gris); }
+.pts-nombre { display: inline-flex; align-items: baseline; gap: 2px; white-space: nowrap; }
+.ligne-supplement {
+  display: block; font-size: 10.5px; font-weight: 400; color: var(--gris);
+  margin-top: 2px; white-space: nowrap;
+}
+.compteur-bons {
+  display: block; font-size: 10.5px; font-weight: 400; color: var(--gris);
+  margin-top: 1px;
+}
 .classement-gains {
   font-size: 13px; font-weight: 600; color: var(--vert);
   min-width: 46px; text-align: right;
