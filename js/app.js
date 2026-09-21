@@ -251,6 +251,7 @@ async function demarrerApp() {
   const jBadge = document.getElementById('header-journee-badge');
   if (jBadge) jBadge.textContent = 'J.' + APP.journeeActive;
   chargerTab(onglet);
+  verifierMessageFinJournee().catch(e => console.warn('verifierMessageFinJournee', e));
 }
 
 function deconnexion() {
@@ -367,6 +368,16 @@ function chargerAdmin() {
         <p class="text-sm text-muted">Ajouter, modifier ou retirer des participants.</p>
       </div>
 
+      <!-- ── Messages de fin de journée ── -->
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title" style="margin-bottom:8px">💬 Messages de fin de journée</div>
+        <p class="text-sm text-muted" style="margin-bottom:10px">
+          Un message est tiré au sort selon le classement de chacun à la fin de chaque journée. Un message par ligne, autant que vous voulez par catégorie.
+        </p>
+        <div id="zone-messages-classement"><div class="loading"><div class="spinner"></div></div></div>
+        <button class="btn-primary mt-8" onclick="sauverMessagesClassement()" style="width:100%">💾 Enregistrer les messages</button>
+      </div>
+
       <!-- ── Rafraîchir les horaires (toutes journées à venir) ── -->
       <div class="card" style="margin-bottom:12px">
         <div class="card-title" style="margin-bottom:8px">🕐 Horaires des matchs</div>
@@ -454,6 +465,7 @@ function chargerAdmin() {
       </div>
 
     </div>`;
+  chargerMessagesClassementAdmin();
 }
 
 // Met à jour le texte du bouton quand on change la sélection
@@ -638,6 +650,30 @@ function comparerAvecDepartage(ptsMap, statutsMap) {
     if (soumisA == null) return 1;
     if (soumisB == null) return -1;
     return soumisA - soumisB; // le plus petit timestamp (= soumis le plus tôt) d'abord
+  };
+}
+
+// ── Bonus "8 ou 9 bons pronos sur 9" ────────────────────────────
+// "Bon" au sens large : bon sens (3 pts) OU score exact (5/7 pts), donc
+// tout match où calculerPoints() renvoie un total strictement positif.
+// Ne s'applique que si TOUS les matchs de la journée ont un score connu
+// (sinon on ne peut pas encore savoir si le seuil est atteint).
+// Renvoie { nbBons, nbJoues, bonusObtenu, ptsBonus } pour un joueur donné.
+function calculerBonusJournee(prono, matchs) {
+  let nbBons = 0, nbJoues = 0;
+  matchs.forEach((match, idx) => {
+    if (!match.scoreReel) return;
+    nbJoues++;
+    const p = prono?.[idx];
+    if (!p) return;
+    const pts = calculerPoints(p, match.scoreReel);
+    if (pts && pts > 0) nbBons++;
+  });
+  const tousJoues = matchs.length > 0 && nbJoues === matchs.length;
+  const bonusObtenu = tousJoues && nbBons >= (CONFIG.bareme.bonusJourneeSeuil || 8);
+  return {
+    nbBons, nbJoues, tousJoues, bonusObtenu,
+    ptsBonus: bonusObtenu ? (CONFIG.bareme.bonusJourneePoints || 10) : 0,
   };
 }
 
@@ -1278,6 +1314,15 @@ function renderResultats(j, data) {
     });
   }
 
+  // Bonus "8 ou 9 bons pronos sur 9" — calculé par joueur, appliqué en +10 pts
+  // fixe (après pénalité/joker), une fois tous les scores de la journée connus.
+  const bonusInfoParJoueur = {};
+  APP.joueurs.forEach(jo => {
+    const info = calculerBonusJournee(soumissions[jo.id], matchs);
+    bonusInfoParJoueur[jo.id] = info;
+    if (info.bonusObtenu) totaux[jo.id] = (totaux[jo.id] || 0) + info.ptsBonus;
+  });
+
   // Classement journée — tous les joueurs, même sans pronostic
   // Les non-soumis ont déjà leurs points par défaut dans totaux (calculés ci-dessus)
   // Si les scores ne sont pas encore tous là, on affiche quand même avec les pts actuels
@@ -1336,11 +1381,21 @@ function renderResultats(j, data) {
         : ((estTardif ? '<br><small style="color:var(--or)">⚠️ tardif</small>' : '')
           + (estJoker  ? '<br><small style="color:var(--or)">🃏 joker ×2</small>' : ''));
 
+      // Compteur "bons pronos" en direct (bon sens ou exact), parmi les matchs
+      // déjà joués — et badge si le bonus +10 a été obtenu.
+      const bInfo = bonusInfoParJoueur[jo.id];
+      const compteurBons = (aSoumis && bInfo.nbJoues > 0)
+        ? '<br><small style="color:var(--gris)">🎯 ' + bInfo.nbBons + '/' + bInfo.nbJoues + ' bons pronos</small>'
+        : '';
+      const badgeBonus = bInfo.bonusObtenu
+        ? '<br><small style="color:var(--vert);font-weight:700">🎁 +' + bInfo.ptsBonus + ' bonus</small>'
+        : '';
+
       html += '<div class="classement-row' + (isMe ? ' moi' : '') + '"'
         + (!aSoumis && !tousScores2 ? ' style="opacity:0.45"' : '') + '>'
         + '<div class="rang-badge ' + rangClass + '">' + rangLabel + '</div>'
-        + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + '</div>'
-        + '<div class="classement-pts">' + pts + subLabel + '<span>pts</span></div>'
+        + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + compteurBons + '</div>'
+        + '<div class="classement-pts">' + pts + subLabel + badgeBonus + '<span>pts</span></div>'
         + (afficherGains && gain > 0 ? '<div class="classement-gains">+' + gain + '€</div>' : '<div></div>')
         + '</div>';
     });
@@ -1506,6 +1561,7 @@ function chargerClassementSaison() {
       totalPronosJoues: 0, bonsPronostics: 0, scoresExacts: 0,
       journeesGagnees: 0, meilleureJournee: 0,
       journeesJouees: 0, journeesSoumises: 0, penalitesRetard: 0,
+      bonusJourneeObtenus: 0,
     }]));
 
     snaps.forEach((snap, snapIdx) => {
@@ -1571,6 +1627,15 @@ function chargerClassementSaison() {
         const def = calculerPointsDefaut(soumettants);
         APP.joueurs.forEach(jo => { if (!soumissions[jo.id]) ptsJ[jo.id] = def; });
       }
+
+      // Bonus "8 ou 9 bons pronos sur 9" — compté aussi dans les stats de saison
+      APP.joueurs.forEach(jo => {
+        const info = calculerBonusJournee(soumissions[jo.id], matchs);
+        if (info.bonusObtenu) {
+          ptsJ[jo.id] = (ptsJ[jo.id] || 0) + info.ptsBonus;
+          stats[jo.id].bonusJourneeObtenus++;
+        }
+      });
 
       const sorted = APP.joueurs.slice().sort(comparerAvecDepartage(ptsJ, statuts));
       APP.joueurs.forEach(jo => { totaux[jo.id].pts += ptsJ[jo.id]; });
@@ -1849,6 +1914,9 @@ function chargerClassementSaison() {
       detHtml += statLigne('💯', 'Scores exacts', s.scoresExacts);
       detHtml += statLigne('🔥', 'Meilleure journée', s.meilleureJournee + ' pts');
       detHtml += statLigne('📝', 'Taux de participation', pctParticipation !== null ? pctParticipation + '%' : '—');
+      if (s.bonusJourneeObtenus > 0) {
+        detHtml += statLigne('🎁', 'Bonus 8/9 obtenus', s.bonusJourneeObtenus);
+      }
       if (s.penalitesRetard > 0) {
         detHtml += statLigne('⚠️', 'Soumissions tardives', s.penalitesRetard);
       }
@@ -1916,6 +1984,14 @@ function chargerClassementJournee(j) {
         return acc + (p && match.scoreReel ? calculerPoints(p, match.scoreReel) || 0 : 0);
       }, 0)]));
 
+    // Bonus "8 ou 9 bons pronos sur 9"
+    const bonusInfoParJoueur = {};
+    APP.joueurs.forEach(jo => {
+      const info = calculerBonusJournee(soumissions[jo.id], matchs);
+      bonusInfoParJoueur[jo.id] = info;
+      if (info.bonusObtenu) ptsJ[jo.id] = (ptsJ[jo.id] || 0) + info.ptsBonus;
+    });
+
     // Trier tous les joueurs (soumis ou non) par points décroissants,
     // et à égalité, par heure de soumission de la grille (le plus tôt gagne)
     const sorted = APP.joueurs.slice()
@@ -1941,12 +2017,19 @@ function chargerClassementJournee(j) {
       const isMe = jo.id === monId;
 
       const aSoumis2 = !!soumissions[jo.id];
+      const bInfo = bonusInfoParJoueur[jo.id];
+      const compteurBons = (aSoumis2 && bInfo.nbJoues > 0)
+        ? '<br><small style="color:var(--gris)">🎯 ' + bInfo.nbBons + '/' + bInfo.nbJoues + ' bons pronos</small>'
+        : '';
+      const badgeBonus = bInfo.bonusObtenu
+        ? '<br><small style="color:var(--vert);font-weight:700">🎁 +' + bInfo.ptsBonus + ' bonus</small>'
+        : '';
       html += '<div class="classement-row' + (isMe ? ' moi' : '') + '"'
         + (aSoumis2 ? '' : ' style="opacity:0.4"') + '>'
         + '<div class="rang-badge ' + (aSoumis2 && rang <= 3 ? 'rang-' + rang : 'rang-other') + '">'
         + (aSoumis2 ? (medals[rang] || rang) : '—') + '</div>'
-        + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + '</div>'
-        + '<div class="classement-pts">' + (aSoumis2 ? pts : '0') + '<span>pts</span></div>'
+        + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + compteurBons + '</div>'
+        + '<div class="classement-pts">' + (aSoumis2 ? pts : '0') + badgeBonus + '<span>pts</span></div>'
         + (APP.argentActif && aTousScores && gain > 0 && aSoumis2
             ? '<div class="classement-gains">+' + gain + '€</div>'
             : '<div></div>')
@@ -2579,14 +2662,19 @@ async function rafraichirScoresESPN(j, silencieux) {
     const data   = snap.data();
     const matchs = data.matchs || [];
 
-    // Calculer la plage de dates : J-1 à J+1 autour de la journée
+    // On cherche dans TOUT le calendrier ESPN de la saison (déjà mis en cache),
+    // plutôt qu'une fenêtre de dates étroite calculée à partir des horaires
+    // déjà stockés localement. Cette fenêtre pouvait être fausse si les
+    // horaires enregistrés étaient périmés (match reprogrammé par la TV,
+    // pas encore rafraîchi) — auquel cas la recherche par date ratait
+    // complètement les vrais matchs, même s'ils existaient bien sur ESPN.
+    // Fenêtre de dates calculée à partir des horaires stockés (rapide, cas normal)
     const timestamps = matchs.filter(m => m.timestamp).map(m => m.timestamp);
     let dateMin, dateMax;
     if (timestamps.length > 0) {
       dateMin = new Date(Math.min(...timestamps) - 86400000); // -1 jour
       dateMax = new Date(Math.max(...timestamps) + 86400000); // +1 jour
     } else {
-      // Fallback : hier + demain
       dateMin = new Date(Date.now() - 86400000);
       dateMax = new Date(Date.now() + 86400000);
     }
@@ -2596,10 +2684,27 @@ async function rafraichirScoresESPN(j, silencieux) {
 
     const resp   = await fetch(url);
     const espnData = await resp.json();
-    const events = espnData.events || [];
+    let events = espnData.events || [];
+
+    // Filet de sécurité : si la fenêtre calculée à partir des horaires stockés
+    // ne renvoie RIEN, c'est probablement que ces horaires sont périmés (match
+    // reprogrammé, pas encore rafraîchi). On retente alors avec une fenêtre
+    // large centrée sur AUJOURD'HUI plutôt que sur les horaires stockés — ça
+    // capture le match même si sa date enregistrée était fausse.
+    if (events.length === 0) {
+      const dateMinAuj = new Date(Date.now() - 4 * 86400000);
+      const dateMaxAuj = new Date(Date.now() + 4 * 86400000);
+      const urlFallback = 'https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard'
+                + '?dates=' + fmt(dateMinAuj) + '-' + fmt(dateMaxAuj);
+      try {
+        const respFallback = await fetch(urlFallback);
+        const espnDataFallback = await respFallback.json();
+        events = espnDataFallback.events || [];
+      } catch (eFallback) { /* on retombera sur le message d'erreur ci-dessous */ }
+    }
 
     if (events.length === 0) {
-      showToast('Aucun match ESPN sur cette période', 'warning');
+      showToast('Aucun match ESPN trouvé, même en élargissant la recherche', 'warning');
       return;
     }
 
@@ -2638,7 +2743,6 @@ async function rafraichirScoresESPN(j, silencieux) {
           statutMatch: comp?.status?.displayClock || '',
         };
       }
-      // Remettre scoreEnCours à false si match pas encore commencé
       if (match.scoreEnCours && !inProgress && !completed) {
         return { ...match, scoreEnCours: false };
       }
@@ -2784,7 +2888,150 @@ async function sauverPronoMatchReouvert(j, idx) {
   }
 }
 
-// ── Activer/désactiver l'affichage de l'argent (persistant, pour tous) ────
+// ── Messages de fin de journée (admin) ──────────────────────────
+const CLES_MESSAGES = [
+  { cle: 'premier',      label: '🥇 1er de la journée' },
+  { cle: 'deuxieme',     label: '🥈 2e de la journée' },
+  { cle: 'avantDernier', label: '😅 Avant-dernier' },
+  { cle: 'dernier',      label: '😂 Dernier de la journée' },
+  { cle: 'autres',       label: '💪 Tous les autres' },
+];
+
+async function chargerMessagesClassementAdmin() {
+  const zone = document.getElementById('zone-messages-classement');
+  if (!zone) return;
+  const messages = await recupererMessagesClassement();
+
+  zone.innerHTML = CLES_MESSAGES.map(({ cle, label }) => `
+    <div style="margin-bottom:12px">
+      <label class="text-sm" style="font-weight:600;display:block;margin-bottom:4px">${label}</label>
+      <textarea id="msg-classement-${cle}" rows="3" style="width:100%;box-sizing:border-box;
+        padding:8px;border:1px solid var(--gris-l);border-radius:8px;font-size:13px;font-family:inherit"
+        placeholder="Un message par ligne">${(messages[cle] || []).join('\n')}</textarea>
+    </div>`).join('');
+}
+
+async function recupererMessagesClassement() {
+  try {
+    const snap = await APP.db.collection('config').doc('general').get();
+    const stocke = snap.exists ? snap.data().messagesClassement : null;
+    return stocke || CONFIG.messagesClassementDefaut;
+  } catch (e) {
+    return CONFIG.messagesClassementDefaut;
+  }
+}
+
+async function sauverMessagesClassement() {
+  const messages = {};
+  CLES_MESSAGES.forEach(({ cle }) => {
+    const val = document.getElementById(`msg-classement-${cle}`)?.value || '';
+    messages[cle] = val.split('\n').map(l => l.trim()).filter(Boolean);
+  });
+  // Sécurité : jamais de catégorie totalement vide (repli sur les valeurs par défaut)
+  CLES_MESSAGES.forEach(({ cle }) => {
+    if (messages[cle].length === 0) messages[cle] = CONFIG.messagesClassementDefaut[cle];
+  });
+  try {
+    await APP.db.collection('config').doc('general').set({ messagesClassement: messages }, { merge: true });
+    showToast('💬 Messages enregistrés', 'success');
+  } catch (e) {
+    showToast('Erreur lors de l\'enregistrement', 'error');
+  }
+}
+
+// ── Détection et affichage du message de fin de journée ─────────
+// Parcourt les journées dans l'ordre à partir de la dernière déjà vue par
+// CE joueur (mémorisé en local) ; s'arrête à la première journée pas encore
+// terminée (tousScores). N'affiche qu'un seul message par ouverture d'app.
+async function verifierMessageFinJournee() {
+  if (!APP.joueurActif || !APP.db) return;
+  const joueurId = APP.joueurActif.id;
+  const cleStockage = `msgFinJournee_vu_${joueurId}_${saisonKey(CONFIG.saison)}`;
+  let dernierVu = 0;
+  try { dernierVu = parseInt(localStorage.getItem(cleStockage) || '0', 10) || 0; } catch(e) {}
+
+  for (let j = dernierVu + 1; j <= CONFIG.nbJournees; j++) {
+    let snap;
+    try { snap = await dbSaison('journees', `j${j}`).get(); }
+    catch(e) { return; }
+    if (!snap.exists) return; // journée pas encore créée : on s'arrête là
+
+    const data = snap.data();
+    const matchs = data.matchs || [];
+    const tousScores = matchs.length > 0 && matchs.every(m => m.scoreReel !== null);
+    if (!tousScores) return; // dès qu'une journée n'est pas finie, on arrête (ordre chronologique)
+
+    let soumissions = data.soumissions || {};
+    if (Object.keys(soumissions).length === 0) {
+      Object.keys(data).forEach(k => {
+        if (k.startsWith('soumissions.')) soumissions[k.replace('soumissions.','')] = data[k];
+      });
+    }
+    const statuts = data.statuts || {};
+
+    // Reproduit exactement le calcul du classement journée (pénalité, joker, défaut, bonus)
+    const ptsJ = Object.fromEntries(APP.joueurs.map(jo => [jo.id,
+      matchs.reduce((acc, match, idx) => {
+        const p = soumissions[jo.id]?.[idx];
+        return acc + (p && match.scoreReel ? calculerPoints(p, match.scoreReel) || 0 : 0);
+      }, 0)]));
+    APP.joueurs.forEach(jo => {
+      const st = statuts[jo.id];
+      if (st?.tardif && st?.penalite) ptsJ[jo.id] = Math.max(0, ptsJ[jo.id] + st.penalite);
+      if (st?.joker === true) ptsJ[jo.id] = ptsJ[jo.id] * 2;
+    });
+    const soumettants = Object.fromEntries(APP.joueurs.filter(jo => soumissions[jo.id]).map(jo => [jo.id, ptsJ[jo.id]]));
+    const def = calculerPointsDefaut(soumettants);
+    APP.joueurs.forEach(jo => { if (!soumissions[jo.id]) ptsJ[jo.id] = def; });
+    APP.joueurs.forEach(jo => {
+      const info = calculerBonusJournee(soumissions[jo.id], matchs);
+      if (info.bonusObtenu) ptsJ[jo.id] = (ptsJ[jo.id] || 0) + info.ptsBonus;
+    });
+
+    const sorted = APP.joueurs.slice().sort(comparerAvecDepartage(ptsJ, statuts));
+    const rang = sorted.findIndex(jo => jo.id === joueurId) + 1;
+    const nbJoueurs = sorted.length;
+
+    if (rang < 1) { // le joueur actif n'est pas dans APP.joueurs (admin sans profil) : rien à afficher
+      try { localStorage.setItem(cleStockage, String(j)); } catch(e) {}
+      continue;
+    }
+
+    let categorie;
+    if (rang === nbJoueurs)      categorie = 'dernier';
+    else if (rang === 1)         categorie = 'premier';
+    else if (rang === 2)         categorie = 'deuxieme';
+    else if (rang === nbJoueurs - 1) categorie = 'avantDernier';
+    else                          categorie = 'autres';
+
+    const messages = await recupererMessagesClassement();
+    const pool = (messages[categorie]?.length ? messages[categorie] : CONFIG.messagesClassementDefaut[categorie]);
+    const message = pool[Math.floor(Math.random() * pool.length)];
+
+    afficherModalFinJournee(j, rang, nbJoueurs, ptsJ[joueurId] || 0, message);
+
+    try { localStorage.setItem(cleStockage, String(j)); } catch(e) {}
+    return; // un seul message par ouverture d'app
+  }
+}
+
+function afficherModalFinJournee(j, rang, nbJoueurs, pts, message) {
+  const titre = document.getElementById('modal-title');
+  const body  = document.getElementById('modal-body');
+  if (!titre || !body) return;
+  titre.textContent = `Journée ${j} terminée`;
+  body.innerHTML = `
+    <div style="text-align:center;padding:8px 4px">
+      <div style="font-size:40px;margin-bottom:10px">${rang===1?'🏆':rang===nbJoueurs?'😅':'⚽'}</div>
+      <p style="font-size:15px;font-weight:600;margin:0 0 6px">
+        ${rang}${rang===1?'er':'e'} sur ${nbJoueurs} — ${pts} pts
+      </p>
+      <p style="font-size:14px;color:var(--gris-fonce);line-height:1.5;margin:0 0 16px">${message}</p>
+      <button class="btn-primary" onclick="fermerModal()" style="width:100%">C'est noté !</button>
+    </div>`;
+  ouvrirModal();
+}
+
 async function toggleArgentActif(val) {
   try {
     await APP.db.collection('config').doc('general').set({ argentActif: !!val }, { merge: true });
