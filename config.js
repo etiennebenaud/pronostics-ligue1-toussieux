@@ -27,6 +27,8 @@ const CONFIG = {
     bonSens:  3,
     exact:    5,
     exact4b:  7,
+    bonusJourneeSeuil:  8,   // nb minimum de bons pronos (bon sens OU exact) sur 9 pour le bonus
+    bonusJourneePoints: 10,  // points accordés si le seuil est atteint
   },
 
   // ── Gains par journée ────────────────────────────────────
@@ -90,5 +92,34 @@ const CONFIG = {
     couleurVert:       "#1A7A3A",
     nomApp:            "Toussi'Pronos",
     descriptionApp:    "Toussi\'Pronos · Ligue 1 2026/2027",
+  },
+
+  // ── Messages de fin de journée (configurables dans Admin) ──
+  // Un message aléatoire est choisi dans la liste correspondant au rang du
+  // joueur, affiché une seule fois par journée à l'ouverture de l'app.
+  messagesClassementDefaut: {
+    premier: [
+      "🏆 Journée en boss ! Tu domines le classement, continue comme ça !",
+      "🥇 Premier de la journée, respect total !",
+      "👑 Le roi de la journée, c'est toi !",
+    ],
+    deuxieme: [
+      "🥈 Si proche de la victoire ! La prochaine est pour toi ?",
+      "😤 Deuxième, à un cheveu du sommet — reviens plus fort !",
+    ],
+    avantDernier: [
+      "😅 Pas passé loin de la dernière place... la prochaine journée te tend les bras pour remonter !",
+      "🫣 Avant-dernier, ça sent le sapin... mais rien n'est perdu !",
+    ],
+    dernier: [
+      "🙃 Dernier de la journée... mais premier au classement du courage !",
+      "😂 Bon, disons que cette journée restera entre nous.",
+      "🐌 Dernière place, mais la meilleure ambiance, promis.",
+    ],
+    autres: [
+      "💪 Continue comme ça, la prochaine journée peut tout changer !",
+      "⚽ Milieu de tableau, milieu tranquille — allez, on pousse un peu plus !",
+      "🔥 Pas mal du tout, garde ce rythme !",
+    ],
   },
 };
