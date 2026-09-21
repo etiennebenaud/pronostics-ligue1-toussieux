@@ -13,13 +13,18 @@ const SPORTSDB_LEAGUE = 4334; // Ligue 1
 // J1 contient exactement les 18 équipes participantes
 async function fetchEquipesSaison(saisonKey) {
   try {
-    const matchs = await fetchJourneeAPI(1, saisonKey.replace('-', '/'));
-    if (!matchs || matchs.length === 0) return [];
+    // On dérive la liste depuis TOUT le calendrier ESPN de la saison (déjà mis
+    // en cache), plutôt que la seule journée 1 via fetchJourneeAPI — celle-ci
+    // pouvait retomber sur TheSportsDB, connu pour renvoyer des journées
+    // incomplètes (parfois 5 matchs sur 9), d'où des équipes manquantes.
+    await chargerCacheESPN(saisonKey);
+    const tousLesMatchs = Object.values(window._espnCalCache?.journees || {}).flat();
+    if (tousLesMatchs.length === 0) return [];
     const equipes = [...new Set([
-      ...matchs.map(m => m.domicile),
-      ...matchs.map(m => m.exterieur),
+      ...tousLesMatchs.map(m => m.domicile),
+      ...tousLesMatchs.map(m => m.exterieur),
     ])].filter(Boolean).sort();
-    console.log(`Équipes ${saisonKey}:`, equipes);
+    console.log(`Équipes ${saisonKey}:`, equipes.length, equipes);
     return equipes;
   } catch(e) {
     console.error('fetchEquipesSaison:', e);

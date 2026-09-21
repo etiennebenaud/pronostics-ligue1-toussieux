@@ -1377,25 +1377,24 @@ function renderResultats(j, data) {
 
       // Sous-label pour non-soumis ou tardif
       const subLabel = !aSoumis
-        ? (tousScores2 ? '<br><small style="color:var(--gris)">par défaut</small>' : '')
-        : ((estTardif ? '<br><small style="color:var(--or)">⚠️ tardif</small>' : '')
-          + (estJoker  ? '<br><small style="color:var(--or)">🃏 joker ×2</small>' : ''));
+        ? (tousScores2 ? '<br><small class="ligne-supplement">par défaut</small>' : '')
+        : ((estTardif ? '<br><small class="ligne-supplement">⚠️ tardif</small>' : '')
+          + (estJoker  ? '<br><small class="ligne-supplement">🃏 joker ×2</small>' : ''));
 
-      // Compteur "bons pronos" en direct (bon sens ou exact), parmi les matchs
-      // déjà joués — et badge si le bonus +10 a été obtenu.
+      // Compteur "bons pronos" en direct (icône seule), et badge si bonus obtenu.
       const bInfo = bonusInfoParJoueur[jo.id];
       const compteurBons = (aSoumis && bInfo.nbJoues > 0)
-        ? '<br><small style="color:var(--gris)">🎯 ' + bInfo.nbBons + '/' + bInfo.nbJoues + ' bons pronos</small>'
+        ? '<br><small class="compteur-bons">🎯 ' + bInfo.nbBons + '/' + bInfo.nbJoues + '</small>'
         : '';
       const badgeBonus = bInfo.bonusObtenu
-        ? '<br><small style="color:var(--vert);font-weight:700">🎁 +' + bInfo.ptsBonus + ' bonus</small>'
+        ? '<br><small class="ligne-supplement" style="color:var(--vert)">🎁 +' + bInfo.ptsBonus + ' pts bonus</small>'
         : '';
 
       html += '<div class="classement-row' + (isMe ? ' moi' : '') + '"'
         + (!aSoumis && !tousScores2 ? ' style="opacity:0.45"' : '') + '>'
         + '<div class="rang-badge ' + rangClass + '">' + rangLabel + '</div>'
         + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + compteurBons + '</div>'
-        + '<div class="classement-pts">' + pts + subLabel + badgeBonus + '<span>pts</span></div>'
+        + '<div class="classement-pts"><span class="pts-nombre">' + pts + '<span>pts</span></span>' + subLabel + badgeBonus + '</div>'
         + (afficherGains && gain > 0 ? '<div class="classement-gains">+' + gain + '€</div>' : '<div></div>')
         + '</div>';
     });
@@ -2019,17 +2018,17 @@ function chargerClassementJournee(j) {
       const aSoumis2 = !!soumissions[jo.id];
       const bInfo = bonusInfoParJoueur[jo.id];
       const compteurBons = (aSoumis2 && bInfo.nbJoues > 0)
-        ? '<br><small style="color:var(--gris)">🎯 ' + bInfo.nbBons + '/' + bInfo.nbJoues + ' bons pronos</small>'
+        ? '<br><small class="compteur-bons">🎯 ' + bInfo.nbBons + '/' + bInfo.nbJoues + '</small>'
         : '';
       const badgeBonus = bInfo.bonusObtenu
-        ? '<br><small style="color:var(--vert);font-weight:700">🎁 +' + bInfo.ptsBonus + ' bonus</small>'
+        ? '<br><small class="ligne-supplement" style="color:var(--vert)">🎁 +' + bInfo.ptsBonus + ' pts bonus</small>'
         : '';
       html += '<div class="classement-row' + (isMe ? ' moi' : '') + '"'
         + (aSoumis2 ? '' : ' style="opacity:0.4"') + '>'
         + '<div class="rang-badge ' + (aSoumis2 && rang <= 3 ? 'rang-' + rang : 'rang-other') + '">'
         + (aSoumis2 ? (medals[rang] || rang) : '—') + '</div>'
         + '<div class="classement-nom">' + jo.emoji + ' ' + jo.nom + compteurBons + '</div>'
-        + '<div class="classement-pts">' + (aSoumis2 ? pts : '0') + badgeBonus + '<span>pts</span></div>'
+        + '<div class="classement-pts"><span class="pts-nombre">' + (aSoumis2 ? pts : '0') + '<span>pts</span></span>' + badgeBonus + '</div>'
         + (APP.argentActif && aTousScores && gain > 0 && aSoumis2
             ? '<div class="classement-gains">+' + gain + '€</div>'
             : '<div></div>')
@@ -2077,9 +2076,9 @@ function renderBonus(data,monId,deadlineBonus) {
   // Liste équipes dynamique ou fallback statique
   const eq = (APP.equipesL1 && APP.equipesL1.length > 0)
     ? APP.equipesL1
-    : ['Angers','Auxerre','Brest','Le Havre','Lens','Lille','Lorient',
-       'Lyon','Marseille','Metz','Monaco','Montpellier','Nantes','Nice',
-       'Paris FC','Paris SG','Rennes','Reims','Strasbourg','Toulouse'].sort();
+    : ['Angers','Auxerre','Brest','Le Havre','Le Mans','Lens','Lille',
+       'Lorient','Lyon','Marseille','Monaco','Nice',
+       'Paris FC','Paris SG','Rennes','Strasbourg','Toulouse','Troyes'].sort();
 
   const datalist = '<datalist id="eq-bonus-list">' +
     eq.map(e => '<option value="' + e + '">').join('') + '</datalist>';
@@ -2182,8 +2181,49 @@ function renderBonus(data,monId,deadlineBonus) {
           ' placeholder="22" min="0" ' + ro + ' style="font-size:13px;text-align:center"></div>';
   html += '</div></div>';
 
-  html += btnSoumettre + '</div>';
+  html += btnSoumettre;
+
+  // Une fois qu'on a soumis (et si le réglage l'autorise), on voit les
+  // pronostics bonus de tous les autres joueurs ayant eux aussi soumis —
+  // même principe que pour la grille hebdomadaire.
+  if (js && CONFIG.regles.revelerApresSoumission !== false) {
+    html += afficherBonusAutresJoueurs(data, monId);
+  }
+
+  html += '</div>';
   container.innerHTML = html;
+}
+
+function afficherBonusAutresJoueurs(data, monId) {
+  const autresSoumis = APP.joueurs.filter(jo => jo.id !== monId && data[jo.id + '_soumis']);
+
+  let html = '<div style="margin-top:18px">';
+  html += '<div class="card-title" style="font-size:14px;margin-bottom:10px">👀 Les pronostics des autres</div>';
+
+  if (autresSoumis.length === 0) {
+    html += '<p class="text-sm text-muted">Personne d\'autre n\'a encore soumis ses pronostics de fin de saison.</p>';
+    html += '</div>';
+    return html;
+  }
+
+  html += autresSoumis.map(jo => {
+    const b = data[jo.id] || {};
+    return `
+      <div style="background:var(--color-background-secondary);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:6px">${jo.emoji} ${jo.nom}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:12px;color:var(--color-text-secondary)">
+          <div>🏆 Champion : <strong style="color:var(--color-text-primary)">${b.champion || '—'}</strong></div>
+          <div>🥈 2e : <strong style="color:var(--color-text-primary)">${b.top2 || '—'}</strong></div>
+          <div>🥉 3e : <strong style="color:var(--color-text-primary)">${b.top3 || '—'}</strong></div>
+          <div>🔴 17e : <strong style="color:var(--color-text-primary)">${b.flop1 || '—'}</strong></div>
+          <div>🔴 18e : <strong style="color:var(--color-text-primary)">${b.flop2 || '—'}</strong></div>
+          <div>⚽ Buteur : <strong style="color:var(--color-text-primary)">${b.buteur || '—'}${b.nbuts ? ' (' + b.nbuts + ' buts)' : ''}</strong></div>
+        </div>
+      </div>`;
+  }).join('');
+
+  html += '</div>';
+  return html;
 }
 
 
@@ -2285,10 +2325,9 @@ async function ouvrirAdminJournee() {
   // Utiliser les équipes dynamiques si disponibles, sinon fallback statique
   const equipesL1 = (APP.equipesL1 && APP.equipesL1.length > 0)
     ? APP.equipesL1
-    : ['Angers','Auxerre','Brest','Le Havre','Lens','Lille',
-       'Lorient','Lyon','Marseille','Metz','Monaco','Montpellier',
-       'Nantes','Nice','Paris FC','Paris SG','Rennes','Reims',
-       'Strasbourg','Toulouse'].sort();
+    : ['Angers','Auxerre','Brest','Le Havre','Le Mans','Lens','Lille',
+       'Lorient','Lyon','Marseille','Monaco','Nice',
+       'Paris FC','Paris SG','Rennes','Strasbourg','Toulouse','Troyes'].sort();
 
   const datalistHtml = `<datalist id="eq-admin-list">${equipesL1.map(e => `<option value="${e}">`).join('')}</datalist>`;
 
@@ -2989,7 +3028,16 @@ async function verifierMessageFinJournee() {
     });
 
     const sorted = APP.joueurs.slice().sort(comparerAvecDepartage(ptsJ, statuts));
-    const rang = sorted.findIndex(jo => jo.id === joueurId) + 1;
+    // Même règle de rang que l'affichage à l'écran : à points égaux, même rang
+    // partagé (1, 2, 2, 4...) — sinon le message pouvait annoncer un rang
+    // différent de celui visible dans le classement en cas d'égalité de points.
+    let ptsPrecedentsMsg = -1, rangCourantMsg = 1, rang = 0;
+    sorted.forEach((jo, i) => {
+      const p = ptsJ[jo.id] || 0;
+      const r = (p !== ptsPrecedentsMsg) ? i + 1 : rangCourantMsg;
+      rangCourantMsg = r; ptsPrecedentsMsg = p;
+      if (jo.id === joueurId) rang = r;
+    });
     const nbJoueurs = sorted.length;
 
     if (rang < 1) { // le joueur actif n'est pas dans APP.joueurs (admin sans profil) : rien à afficher
