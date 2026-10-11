@@ -808,3 +808,26 @@ body {
 .score-input {
   transition: border-color 0.2s ease, background-color 0.2s ease;
 }
+
+/* ── Onglet Bonus après clôture : situation actuelle + tableau des pronos ── */
+.bs-titre {
+  font-size: 10.5px; font-weight: 600; text-transform: uppercase;
+  color: var(--gris); margin: 12px 0 2px;
+}
+.bs-ligne {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 5px 0; font-size: 13px; border-bottom: 1px solid var(--gris-l);
+}
+.bs-ligne:last-of-type { border-bottom: none; }
+.bs-droite { font-size: 12px; color: var(--gris); white-space: nowrap; }
+.bs-ex-aequo { font-size: 11px; color: var(--gris); line-height: 1.5; padding: 2px 0 4px; }
+
+.resultats-table td.bt-label { text-align: left; font-weight: 600; color: var(--bleu); font-size: 11px; white-space: nowrap !important; padding: 0 8px !important; min-width: 74px; }
+.resultats-table th.bt-th { min-width: 84px; max-width: 84px; font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.resultats-table td.bt-cell {
+  min-width: 84px; max-width: 84px; white-space: normal !important;
+  line-height: 1.15; font-size: 10.5px; font-weight: 600; color: var(--bleu); padding: 0 4px;
+}
+.resultats-table td.bt-cell.bt-ok     { background: var(--vert-l) !important; color: var(--vert); font-weight: 800; }
+.resultats-table td.bt-cell.bt-proche { background: var(--or-l) !important; color: #7A5400; }
+.resultats-table td.bt-cell.bt-vide   { color: var(--gris-l); font-weight: 400; }
