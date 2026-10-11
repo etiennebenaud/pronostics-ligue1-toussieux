@@ -70,6 +70,11 @@ const CONFIG = {
     // Les matchs déjà joués rapportent 0 pt, cette pénalité s'ajoute en négatif
     penaliteRetard: -5,
 
+    // Retards "offerts" : les N premières soumissions tardives de chaque joueur
+    // sur la saison ne sont pas pénalisées (les matchs déjà joués restent à 0 pt).
+    // La pénalité ci-dessus ne s'applique qu'à partir du (N+1)e retard.
+    retardsSansPenalite: 2,
+
     // Délai max (en heures) après la deadline pour autoriser une réouverture
     // Au-delà, plus aucune réouverture possible, même admin
     delaiReouvretureHeures: 24,
