@@ -432,6 +432,18 @@ function chargerAdmin() {
           value="${CONFIG.regles.penaliteRetard}" max="0" min="-20"
           style="margin-bottom:10px"
           onchange="sauverPenalite(parseInt(this.value))">
+        <label class="profil-label">Retards offerts par joueur et par saison</label>
+        <input type="number" class="profil-input" id="admin-retards-offerts"
+          value="${CONFIG.regles.retardsSansPenalite ?? 0}" min="0" max="10"
+          style="margin-bottom:10px"
+          onchange="sauverRetardsOfferts(parseInt(this.value))">
+        <button class="btn-secondary" id="btn-recalc-retards" onclick="recalculerPenalitesRetard()" style="width:100%;margin-bottom:6px">
+          🔁 Recalculer les pénalités de retard
+        </button>
+        <p class="text-sm text-muted" style="margin:0 0 10px">
+          Applique la règle (retards offerts, puis pénalité) à toutes les soumissions tardives déjà enregistrées. À lancer après un changement de règle.
+        </p>
+        <div id="resultat-recalc-retards"></div>
         <label class="profil-label">Délai réouverture (heures)</label>
         <input type="number" class="profil-input" id="admin-delai-reouverture"
           value="${CONFIG.regles.delaiReouvretureHeures}" min="1" max="72"
@@ -841,7 +853,7 @@ function renderGrille(j, data) {
     const etaitTardif = statut?.tardif === true;
     bc.innerHTML = etaitTardif
       ? '<button class="btn-soumettre locked" disabled style="background:var(--or)">'
-        + '⚠️ Pronostics soumis en retard (pénalité ' + CONFIG.regles.penaliteRetard + 'pts)</button>'
+        + '⚠️ Pronostics soumis en retard' + ((statut?.penalite ?? CONFIG.regles.penaliteRetard) ? ' (pénalité ' + (statut?.penalite ?? CONFIG.regles.penaliteRetard) + ' pts)' : ' (sans pénalité)') + '</button>'
       : '<button class="btn-soumettre locked" disabled>✅ Pronostics soumis et verrouillés</button>';
   } else if (modeRetard) {
     // Réouverture possible : saisie tardive avec avertissement
@@ -850,10 +862,10 @@ function renderGrille(j, data) {
       + '<p style="font-size:13px;font-weight:600;color:var(--or);margin-bottom:6px">⚠️ Saisie tardive</p>'
       + '<p class="text-sm" style="margin-bottom:8px;color:var(--gris)">'
       + 'Les matchs déjà joués rapportent <strong>0 point</strong>.<br>'
-      + 'Pénalité : <strong>' + CONFIG.regles.penaliteRetard + ' pts</strong> sur votre total.'
+      + texteRegleRetard()
       + '</p>'
       + '<button class="btn-soumettre" onclick="soumettreTardif(' + j + ')"'
-      + ' style="background:var(--or)">⚠️ Soumettre en retard (pénalité ' + CONFIG.regles.penaliteRetard + 'pts)</button>'
+      + ' style="background:var(--or)">⚠️ Soumettre en retard</button>'
       + '</div>';
   } else if (!saisieOuverte && !peutRouvrir) {
     bc.innerHTML = '<button class="btn-soumettre" disabled>⛔ Délai dépassé — saisie impossible</button>';
@@ -926,6 +938,30 @@ async function soumettre(j) {
 }
 
 // ── Soumission tardive ────────────────────────────────────────
+// ── Retards "offerts" ─────────────────────────────────────────────
+// Les N premiers retards de la saison (CONFIG.regles.retardsSansPenalite) ne
+// coûtent rien ; la pénalité ne s'applique qu'à partir du (N+1)e.
+function penaliteDuRetard(numeroRetard) {
+  const offerts = CONFIG.regles.retardsSansPenalite ?? 0;
+  return numeroRetard > offerts ? CONFIG.regles.penaliteRetard : 0;
+}
+
+// Nombre de soumissions tardives déjà faites par ce joueur AVANT la journée j
+async function compterRetardsAvant(joueurId, j) {
+  const lectures = await Promise.all(Array.from({ length: Math.max(0, j - 1) }, (_, i) =>
+    dbSaison('journees', `j${i + 1}`).get().catch(() => null)));
+  return lectures.filter(s => s && s.exists && s.data().statuts?.[joueurId]?.tardif === true).length;
+}
+
+// Phrase de règle affichée au joueur au moment de soumettre en retard
+function texteRegleRetard() {
+  const n = CONFIG.regles.retardsSansPenalite || 0;
+  const p = CONFIG.regles.penaliteRetard;
+  return n > 0
+    ? 'Vos <strong>' + n + ' premiers retards</strong> de la saison sont sans pénalité ; à partir du ' + (n + 1) + 'e : <strong>' + p + ' pts</strong> sur votre total.'
+    : 'Pénalité : <strong>' + p + ' pts</strong> sur votre total.';
+}
+
 async function soumettreTardif(j) {
   if (!APP.joueurActif) return;
 
@@ -935,6 +971,11 @@ async function soumettreTardif(j) {
   const matchs   = data.matchs || [];
   const deadline = data.deadline || null;
   const now      = Date.now();
+
+  // Combien de retards ce joueur a-t-il déjà eus cette saison ? Les premiers
+  // sont "offerts" : la pénalité ne démarre qu'au (N+1)e.
+  const numeroRetard = (await compterRetardsAvant(APP.joueurActif.id, j)) + 1;
+  const penalite     = penaliteDuRetard(numeroRetard);
 
   const pronostics = {};
   let complets = 0;
@@ -959,11 +1000,12 @@ async function soumettreTardif(j) {
     if (!confirm(`${nbFuturs - complets} match(s) futur(s) sans pronostic. Soumettre quand même ?`)) return;
   }
 
-  if (!confirm(`Confirmer la soumission tardive pour J${j} ?
-`
-    + `• Matchs passés : 0 pt automatiquement
-`
-    + `• Pénalité : ${CONFIG.regles.penaliteRetard} pts sur votre total de journée`)) return;
+  const infoPenalite = penalite === 0
+    ? '• Retard n°' + numeroRetard + ' de la saison : sans pénalité (' + (CONFIG.regles.retardsSansPenalite || 0) + ' retards offerts)'
+    : '• Retard n°' + numeroRetard + ' de la saison : pénalité de ' + penalite + ' pts sur votre total de journée';
+  if (!confirm('Confirmer la soumission tardive pour J' + j + ' ?\n'
+    + '• Matchs passés : 0 pt automatiquement\n'
+    + infoPenalite)) return;
 
   try {
     const existing = snap.exists ? snap.data() : {};
@@ -976,12 +1018,13 @@ async function soumettreTardif(j) {
       soumisAt:  now,
       complets,
       tardif:    true,
-      penalite:  CONFIG.regles.penaliteRetard,
+      penalite,
+      numeroRetard,
       joker:     aJokerT,
     };
 
     await ref.set({ ...existing, soumissions, statuts }, { merge: true });
-    showToast(`⚠️ Soumission tardive enregistrée (${CONFIG.regles.penaliteRetard} pts)`, 'warning');
+    showToast(penalite === 0 ? `⚠️ Soumission tardive enregistrée (retard n°${numeroRetard}, sans pénalité)` : `⚠️ Soumission tardive enregistrée (${penalite} pts)`, 'warning');
   } catch(e) {
     console.error(e);
     showToast('Erreur soumission tardive', 'error');
@@ -1251,7 +1294,8 @@ function renderResultats(j, data) {
       } else if (pts !== null) {
         // Scores disponibles : toujours afficher avec couleur et points, prono puis points en dessous
         const cls = pts === 7 ? 'pts-7' : pts === 5 ? 'pts-5' : pts === 3 ? 'pts-3' : 'pts-0';
-        const tardifCell = (data.statuts?.[jo.id]?.tardif) ? ' ⚠️' : '';
+        // ⚠️ seulement sur le match déjà joué au moment de la soumission tardive
+        const tardifCell = p.passé ? ' ⚠️' : '';
         const pronoStr = p.passé ? '— (passé)' : p.dom + '-' + p.ext;
         htmlScroll += '<td class="prono-cell ' + cls + colCls + '">'
           + pronoStr + tardifCell + '<br><small>' + pts + 'pt</small></td>';
@@ -1270,9 +1314,18 @@ function renderResultats(j, data) {
       <td colspan="2" style="text-align:right;padding-right:8px;font-size:12px;background:var(--color-background-secondary)">Total</td>
     </tr>`;
     htmlScroll += `<tr style="background:var(--color-background-secondary);font-weight:500">
-      ${joueursOrd.map(jo =>
-        `<td class="${jo.id===monIdRes?'col-moi':''}" style="font-size:13px;color:var(--orange);font-weight:700">${totaux[jo.id] || '—'}</td>`
-      ).join('')}
+      ${joueursOrd.map(jo => {
+        // Le total du tableau est la somme des matchs AVANT pénalité de retard et
+        // joker (appliqués ensuite au classement) : on l'indique sous le total.
+        const st = data.statuts?.[jo.id];
+        const hints = [];
+        if (st?.tardif && st?.penalite) hints.push(String(st.penalite).replace('-', '−') + ' ⚠️');
+        if (st?.joker === true) hints.push('×2 🃏');
+        const hint = hints.length
+          ? '<br><small style="font-size:9px;font-weight:400;color:var(--gris);white-space:nowrap">' + hints.join('<br>') + '</small>'
+          : '';
+        return `<td class="${jo.id===monIdRes?'col-moi':''}" style="font-size:13px;color:var(--orange);font-weight:700">${totaux[jo.id] || '—'}${hint}</td>`;
+      }).join('')}
     </tr>`;
   }
 
@@ -1378,7 +1431,7 @@ function renderResultats(j, data) {
       // Sous-label pour non-soumis ou tardif
       const subLabel = !aSoumis
         ? (tousScores2 ? '<br><small class="ligne-supplement">par défaut</small>' : '')
-        : ((estTardif ? '<br><small class="ligne-supplement">⚠️ tardif</small>' : '')
+        : ((estTardif ? '<br><small class="ligne-supplement">⚠️ tardif (' + ((statJo.penalite ?? CONFIG.regles.penaliteRetard) ? String(statJo.penalite ?? CONFIG.regles.penaliteRetard).replace('-', '−') : 'sans pénalité') + ')</small>' : '')
           + (estJoker  ? '<br><small class="ligne-supplement">🃏 joker ×2</small>' : ''));
 
       // Compteur "bons pronos" en direct (icône seule), et badge si bonus obtenu.
@@ -1544,6 +1597,84 @@ function changerTypeClassement() {
   else chargerClassementJournee(parseInt(val));
 }
 
+// ── Comparaison floue d'un nom de joueur saisi à la main (meilleur buteur) ──
+// "Thauvin" doit retrouver "Florian Thauvin" : un mot de plus de 3 lettres
+// en commun suffit.
+function memeJoueur(pronoNom, reelNom) {
+  const norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, ' ').trim();
+  const pw = norm(pronoNom).split(' '), rw = norm(reelNom).split(' ');
+  return pw.some(w => w.length > 3 && rw.some(rw2 => rw2.includes(w) || w.includes(rw2)));
+}
+
+// ── Comparaison d'équipes pour les pronos bonus ─────────────────
+// Reprend la correspondance souple habituelle, mais sans confondre les deux
+// clubs parisiens : "Paris SG" et "Paris FC" partagent le mot "paris", ce qui
+// faisait passer l'un pour l'autre. Dès qu'un "Paris" est en jeu, seule
+// l'égalité stricte (alias compris) compte.
+function memeEquipeBonus(a, b) {
+  const na = normaliserNomEquipe(a), nb = normaliserNomEquipe(b);
+  if (!na || !nb) return false;
+  const canon = s => ALIAS_EQUIPES_TOUSSIPRONOS[s] || s;
+  if (canon(na) === canon(nb)) return true;
+  if (na.includes('paris') || nb.includes('paris')) return false;
+  return equipesCorrespondent(a, b);
+}
+
+// ── Situation actuelle ESPN : classement réel + meilleur buteur ──
+// Mise en cache 5 minutes, partagée entre le classement général et l'onglet
+// Bonus. Renvoie { classement: [{rang, nom, pts, joues}], buteur: {nom, buts,
+// ex:[noms ex æquo]} | null, majAt }. Lève une erreur si ESPN est injoignable.
+async function recupererSituationESPN(saison) {
+  const cleSaison = saisonApiFormat(saison || CONFIG.saison);
+  const c = APP._situationESPN;
+  if (c && c.cle === cleSaison && Date.now() - c.at < 5 * 60 * 1000) return c.data;
+
+  // 1) Classement réel
+  const rStand = await fetch('https://site.api.espn.com/apis/v2/sports/soccer/fra.1/standings?groups=8');
+  if (!rStand.ok) throw new Error('ESPN classement HTTP ' + rStand.status);
+  const dStand = await rStand.json();
+  const classement = (dStand.children?.[0]?.standings?.entries || []).map((e, i) => {
+    const st = Object.fromEntries((e.stats || []).map(s => [s.name, s.value]));
+    return {
+      rang: st.rank ? Math.round(st.rank) : i + 1,
+      nom: e.team?.displayName, abbr: e.team?.abbreviation,
+      pts: st.points != null ? Math.round(st.points) : null,
+      joues: st.gamesPlayed != null ? Math.round(st.gamesPlayed) : null,
+    };
+  }).sort((a, b) => a.rang - b.rang);
+
+  // 2) Meilleur buteur : buts marqués sur les matchs de la saison, jusqu'à aujourd'hui.
+  // On compte tout but "scoringPlay" (de la tête, penalty, volée... — pas seulement
+  // le type exact "Goal"), sauf les contre son camp.
+  let buteur = null;
+  try {
+    const [anneeDebut] = cleSaison.split('-');
+    const anneeFin = parseInt(anneeDebut) + 1;
+    const debut = new Date(`${anneeDebut}-08-01T00:00:00Z`);
+    const fin = new Date(Math.min(new Date(`${anneeFin}-06-01T00:00:00Z`).getTime(), Date.now()));
+    const events = await fetchESPNEvenements(debut, fin);
+    const compte = {};
+    events.forEach(ev => (ev.competitions?.[0]?.details || []).forEach(d => {
+      if (d.scoringPlay === true && d.ownGoal !== true && d.athletesInvolved?.[0]) {
+        const nom = d.athletesInvolved[0].displayName;
+        compte[nom] = (compte[nom] || 0) + 1;
+      }
+    }));
+    const tries = Object.entries(compte).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    if (tries.length > 0) {
+      const max = tries[0][1];
+      const ex = tries.filter(([, n]) => n === max).map(([nom]) => nom);
+      buteur = { nom: ex[0], buts: max, ex };
+    }
+  } catch (e) {
+    console.warn('Meilleur buteur ESPN indisponible:', e);
+  }
+
+  const data = { classement, buteur, majAt: Date.now() };
+  APP._situationESPN = { cle: cleSaison, at: Date.now(), data };
+  return data;
+}
+
 function chargerClassementSaison() {
   const container = document.getElementById('classement-content');
   if (container) container.innerHTML = '<div class="loading"><div class="spinner"></div>Calcul...</div>';
@@ -1667,42 +1798,17 @@ function chargerClassementSaison() {
         const bonusSnap = await dbSaison('bonus', 'saison').get();
         const bonusData = bonusSnap.exists ? bonusSnap.data() : {};
 
-        // Charger classement réel ESPN
-        const rStand = await fetch('https://site.api.espn.com/apis/v2/sports/soccer/fra.1/standings?groups=8');
-        const dStand = await rStand.json();
-        classementReel = (dStand.children?.[0]?.standings?.entries || [])
-          .map((e, i) => ({ rang: i+1, nom: e.team?.displayName, abbr: e.team?.abbreviation }));
-
-        // Charger meilleur buteur depuis le scoreboard — bornes dynamiques sur la
-        // saison AFFICHÉE (pas une saison codée en dur), ex: 2026/2027 → 20260801-20270601
-        const saisonButeur = saisonApiFormat(APP.saisonAffichee || CONFIG.saison);
-        const [anneeDebutB] = saisonButeur.split('-');
-        const anneeFinB = parseInt(anneeDebutB) + 1;
-        const rScore = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard?dates=${anneeDebutB}0801-${anneeFinB}0601&limit=500`);
-        const dScore = await rScore.json();
-        const scorers = {};
-        (dScore.events || []).forEach(ev => {
-          (ev.competitions?.[0]?.details || []).forEach(detail => {
-            if (detail.type?.text === 'Goal' && detail.athletesInvolved?.[0]) {
-              const name = detail.athletesInvolved[0].displayName;
-              scorers[name] = (scorers[name] || 0) + 1;
-            }
-          });
-        });
-        const topEntry = Object.entries(scorers).sort((a,b) => b[1]-a[1])[0];
-        buteurReel = topEntry ? { nom: topEntry[0], buts: topEntry[1] } : null;
+        // Classement réel + meilleur buteur ESPN (fonction partagée, mise en cache)
+        const situation = await recupererSituationESPN(APP.saisonAffichee || CONFIG.saison);
+        classementReel = situation.classement;
+        buteurReel     = situation.buteur;
 
         const top3Reel = classementReel.slice(0, 3).map(e => e.nom);
         // 17e et 18e (avant-dernier, dernier), dans cet ordre précis
         const flop2Reel = classementReel.slice(-2).map(e => e.nom); // [17e, 18e]
 
         // Normaliser un nom pour comparaison floue
-        const norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]/g,' ').trim();
-        const matchNom = (pronoNom, reelNom) => {
-          const p = norm(pronoNom), r = norm(reelNom);
-          const pw = p.split(' '), rw = r.split(' ');
-          return pw.some(w => w.length > 3 && rw.some(rw2 => rw2.includes(w) || w.includes(rw2)));
-        };
+        const matchNom = memeJoueur;
 
         APP.joueurs.forEach(jo => {
           const b = bonusData[jo.id];
@@ -1710,17 +1816,17 @@ function chargerClassementSaison() {
           const det = {};
 
           // Champion
-          if (b.champion && top3Reel[0] && matchNom(b.champion, top3Reel[0])) {
+          if (b.champion && top3Reel[0] && memeEquipeBonus(b.champion, top3Reel[0])) {
             det.champion = CONFIG.bonusSaison.champion;
             totaux[jo.id].pts += CONFIG.bonusSaison.champion;
           }
 
           // Top 3 dans l'ordre
           const topProno = [b.champion, b.top2, b.top3];
-          const matchesTop = topProno.map((t, i) => t && top3Reel[i] && matchNom(t, top3Reel[i]));
+          const matchesTop = topProno.map((t, i) => t && top3Reel[i] && memeEquipeBonus(t, top3Reel[i]));
           const nbMatchTop = matchesTop.filter(Boolean).length;
           // Compter aussi les équipes dans le désordre
-          const inTopDesordre = topProno.filter(t => t && top3Reel.some(r => matchNom(t, r))).length;
+          const inTopDesordre = topProno.filter(t => t && top3Reel.some(r => memeEquipeBonus(t, r))).length;
           if (nbMatchTop === 3 && !det.champion) {
             // Top 3 dans l'ordre exact
             det.top3Ordre = CONFIG.bonusSaison.top3Ordre;
@@ -1737,9 +1843,9 @@ function chargerClassementSaison() {
 
           // 17e et 18e : 25 pts si les deux dans le bon ordre, 15 pts si trouvés mais dans le désordre
           const flopProno   = [b.flop1, b.flop2]; // [prono 17e, prono 18e]
-          const nbFlopTrouves = flopProno.filter(f => f && flop2Reel.some(r => matchNom(f, r))).length;
+          const nbFlopTrouves = flopProno.filter(f => f && flop2Reel.some(r => memeEquipeBonus(f, r))).length;
           if (nbFlopTrouves === 2) {
-            const ordreCorrect = matchNom(b.flop1, flop2Reel[0]) && matchNom(b.flop2, flop2Reel[1]);
+            const ordreCorrect = memeEquipeBonus(b.flop1, flop2Reel[0]) && memeEquipeBonus(b.flop2, flop2Reel[1]);
             if (ordreCorrect) {
               det.flop2Ordre = CONFIG.bonusSaison.flop2Ordre;
               totaux[jo.id].pts += CONFIG.bonusSaison.flop2Ordre;
@@ -1750,7 +1856,7 @@ function chargerClassementSaison() {
           }
 
           // Buteur
-          if (buteurReel && b.buteur && matchNom(b.buteur, buteurReel.nom)) {
+          if (buteurReel && b.buteur && (buteurReel.ex || [buteurReel.nom]).some(n => matchNom(b.buteur, n))) {
             det.buteur = CONFIG.bonusSaison.buteur;
             totaux[jo.id].pts += CONFIG.bonusSaison.buteur;
             if (b.nbuts && parseInt(b.nbuts) === buteurReel.buts) {
@@ -1795,7 +1901,7 @@ function chargerClassementSaison() {
         + '<div style="margin-bottom:4px"><strong>🏆 Classement ESPN :</strong></div>'
         + '<div>Top 3 : <strong>' + top3 + '</strong></div>'
         + '<div>17e et 18e : <strong>' + flop2Aff + '</strong></div>'
-        + (buteurReel ? '<div>⚽ Meilleur buteur : <strong>' + buteurReel.nom + '</strong> (' + buteurReel.buts + ' buts)</div>' : '')
+        + (buteurReel ? '<div>⚽ Meilleur buteur : <strong>' + (buteurReel.ex || [buteurReel.nom]).join(' / ') + '</strong> (' + buteurReel.buts + ' but' + (buteurReel.buts > 1 ? 's' : '') + ')</div>' : '')
         + '</div>';
     } else if (avecBonus && espnErreur) {
       html += '<div style="background:var(--rouge-l);border-radius:8px;padding:8px 12px;'
@@ -2111,6 +2217,13 @@ function renderBonus(data,monId,deadlineBonus) {
     ? new Date(deadlineBonus).toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
     : null;
 
+  // Une fois le délai dépassé : plus de formulaire. On affiche les pronostics
+  // de tout le monde + la situation actuelle (podium, 2 derniers, meilleur buteur).
+  if (delaiDepasse) {
+    afficherBonusApresCloture(container, data, monId, js);
+    return;
+  }
+
   // Message statut
   var statusMsg;
   if (js) {
@@ -2192,6 +2305,143 @@ function renderBonus(data,monId,deadlineBonus) {
 
   html += '</div>';
   container.innerHTML = html;
+}
+
+// ── Onglet Bonus après clôture : tous les pronostics + situation actuelle ──
+let _bonusRenderToken = 0;
+
+async function afficherBonusApresCloture(container, data, monId, jaiSoumis) {
+  const token = ++_bonusRenderToken;
+
+  // Situation déjà en cache (< 5 min) : un seul rendu, sans clignotement
+  const cache = APP._situationESPN;
+  const enCache = cache && Date.now() - cache.at < 5 * 60 * 1000 ? cache.data : null;
+  if (enCache) {
+    container.innerHTML = htmlBonusApresCloture(data, monId, jaiSoumis, enCache, null);
+    return;
+  }
+
+  // Sinon : premier rendu immédiat (sans surlignage), puis mise à jour quand ESPN répond
+  container.innerHTML = htmlBonusApresCloture(data, monId, jaiSoumis, null, 'chargement');
+  let situation = null, erreur = null;
+  try { situation = await recupererSituationESPN(); }
+  catch (e) { erreur = e.message || 'ESPN indisponible'; }
+  if (token !== _bonusRenderToken) return; // un rendu plus récent a pris le relais
+  container.innerHTML = htmlBonusApresCloture(data, monId, jaiSoumis, situation, erreur);
+}
+
+function htmlBonusApresCloture(data, monId, jaiSoumis, situation, etat) {
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+  let html = '<div style="padding:16px">';
+
+  // ── Statut du joueur connecté ──
+  if (monId) {
+    html += jaiSoumis
+      ? '<div style="background:var(--vert-l);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--vert);margin-bottom:12px">✓ Vos pronostics de fin de saison sont soumis et verrouillés.</div>'
+      : '<div style="background:var(--rouge-l);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--rouge);margin-bottom:12px">⏱️ Le délai est dépassé : vous n\'avez pas soumis de pronostics de fin de saison.</div>';
+  }
+
+  // ── Situation actuelle (ESPN) ──
+  const cl = situation?.classement || [];
+  const n = cl.length;
+  html += '<div class="card" style="margin-bottom:12px">';
+  html += '<div class="card-title" style="margin-bottom:6px">📊 Situation actuelle'
+        + (situation ? '<span style="margin-left:auto;font-size:10px;font-weight:400;color:var(--gris)">ESPN · maj '
+          + new Date(situation.majAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + '</span>' : '')
+        + '</div>';
+
+  if (!situation) {
+    html += etat === 'chargement'
+      ? '<p class="text-sm text-muted" style="margin:6px 0">Chargement du classement…</p>'
+      : '<p class="text-sm" style="margin:6px 0;color:var(--rouge)">⚠️ Classement ESPN indisponible pour le moment — réessayez plus tard.</p>';
+  } else {
+    const ligne = (icone, nom, droite) =>
+      '<div class="bs-ligne"><span>' + icone + ' <strong>' + esc(nom) + '</strong></span><span class="bs-droite">' + droite + '</span></div>';
+    const pts = e => (e.pts != null ? e.pts + ' pts' : '');
+    html += '<div class="bs-titre">Podium</div>';
+    ['🥇', '🥈', '🥉'].forEach((m, i) => { if (cl[i]) html += ligne(m, cl[i].nom, pts(cl[i])); });
+    if (n >= 2) {
+      html += '<div class="bs-titre">Les 2 derniers</div>';
+      html += ligne('🔴', cl[n - 2].rang + 'e · ' + cl[n - 2].nom, pts(cl[n - 2]));
+      html += ligne('🔴', cl[n - 1].rang + 'e · ' + cl[n - 1].nom, pts(cl[n - 1]));
+    }
+    html += '<div class="bs-titre">Meilleur buteur</div>';
+    const b = situation.buteur;
+    if (!b) {
+      html += '<p class="text-sm text-muted" style="margin:4px 0">Pas encore de buteur recensé.</p>';
+    } else if (b.ex.length === 1) {
+      html += ligne('⚽', b.nom, b.buts + ' but' + (b.buts > 1 ? 's' : ''));
+    } else {
+      html += ligne('⚽', b.ex.length + ' joueurs à égalité', b.buts + ' but' + (b.buts > 1 ? 's' : ''));
+      html += '<div class="bs-ex-aequo">' + b.ex.map(esc).join(' · ') + '</div>';
+    }
+  }
+  html += '</div>';
+
+  // ── Tableau des pronostics de tous les joueurs ──
+  const LIGNES = [
+    { cle: 'champion', label: '🥇 Champion' },
+    { cle: 'top2',     label: '🥈 2e' },
+    { cle: 'top3',     label: '🥉 3e' },
+    { cle: 'flop1',    label: '🔴 17e' },
+    { cle: 'flop2',    label: '🔴 18e' },
+    { cle: 'buteur',   label: '⚽ Buteur' },
+    { cle: 'nbuts',    label: '⚽ Buts' },
+  ];
+  const reel = { champion: cl[0]?.nom, top2: cl[1]?.nom, top3: cl[2]?.nom, flop1: cl[n - 2]?.nom, flop2: cl[n - 1]?.nom };
+  const groupePodium = cl.slice(0, 3).map(e => e.nom);
+  const groupeFlop = n >= 2 ? cl.slice(-2).map(e => e.nom) : [];
+
+  // Surlignage : 'bt-ok' = exact aujourd'hui, 'bt-proche' = bonne équipe mais pas à la bonne place
+  const etatCellule = (cle, valeur, bPlayer) => {
+    if (!situation || !valeur) return '';
+    if (cle === 'champion' || cle === 'top2' || cle === 'top3') {
+      if (reel[cle] && memeEquipeBonus(valeur, reel[cle])) return 'bt-ok';
+      return groupePodium.some(t => memeEquipeBonus(valeur, t)) ? 'bt-proche' : '';
+    }
+    if (cle === 'flop1' || cle === 'flop2') {
+      if (reel[cle] && memeEquipeBonus(valeur, reel[cle])) return 'bt-ok';
+      return groupeFlop.some(t => memeEquipeBonus(valeur, t)) ? 'bt-proche' : '';
+    }
+    const buteurs = situation.buteur?.ex || [];
+    if (cle === 'buteur') return buteurs.some(nom => memeJoueur(valeur, nom)) ? 'bt-ok' : '';
+    if (cle === 'nbuts') {
+      return (buteurs.some(nom => memeJoueur(bPlayer.buteur, nom)) && parseInt(valeur) === situation.buteur.buts) ? 'bt-ok' : '';
+    }
+    return '';
+  };
+
+  const joueurs = joueursOrdreResultats();
+  let thFrozen = '<table class="rt-frozen"><thead><tr><th class="match-col" style="min-width:74px;width:74px">Pronostic</th></tr></thead><tbody>';
+  LIGNES.forEach(l => { thFrozen += '<tr><td class="match-col bt-label">' + l.label + '</td></tr>'; });
+  thFrozen += '</tbody></table>';
+
+  let tScroll = '<table class="rt-scroll"><thead><tr>'
+    + joueurs.map(jo => '<th class="bt-th' + (jo.id === monId ? ' col-moi' : '') + '" title="' + esc(jo.nom) + '">' + jo.emoji + ' ' + esc(jo.nom) + '</th>').join('')
+    + '</tr></thead><tbody>';
+  LIGNES.forEach(l => {
+    tScroll += '<tr>' + joueurs.map(jo => {
+      const soumis = !!data[jo.id + '_soumis'];
+      const bp = data[jo.id] || {};
+      const v = bp[l.cle];
+      if (!soumis || v === undefined || v === '' || v === null) {
+        return '<td class="bt-cell bt-vide' + (jo.id === monId ? ' col-moi' : '') + '">—</td>';
+      }
+      const classeEtat = etatCellule(l.cle, v, bp);
+      return '<td class="bt-cell ' + classeEtat + (jo.id === monId ? ' col-moi' : '') + '">' + esc(v) + '</td>';
+    }).join('') + '</tr>';
+  });
+  tScroll += '</tbody></table>';
+
+  const nbSoumis = joueurs.filter(jo => data[jo.id + '_soumis']).length;
+  html += '<div class="card" style="margin-bottom:12px">';
+  html += '<div class="card-title" style="margin-bottom:8px">👀 Les pronostics de chacun'
+        + '<span style="margin-left:auto;font-size:10px;font-weight:400;color:var(--gris)">' + nbSoumis + '/' + joueurs.length + ' soumis</span></div>';
+  html += '<div class="resultats-table">' + thFrozen + '<div class="rt-scroll-outer">' + tScroll + '</div></div>';
+  html += '<p class="text-sm text-muted" style="margin:8px 0 0;font-size:11px">'
+        + '🟩 exact à ce jour · 🟨 bonne équipe, mais pas à la bonne place (podium / 2 derniers). Provisoire : ça évolue au fil de la saison.</p>';
+  html += '</div></div>';
+  return html;
 }
 
 function afficherBonusAutresJoueurs(data, monId) {
@@ -2615,6 +2865,63 @@ function sauverDelaiReouverture(val) {
   showToast('Délai mis à jour (non permanent — modifiez config.js)', 'warning');
 }
 
+function sauverRetardsOfferts(val) {
+  if (isNaN(val) || val < 0) return;
+  CONFIG.regles.retardsSansPenalite = val;
+  showToast('Réglage mis à jour (non permanent — modifiez config.js)', 'warning');
+}
+
+// Recalcule le numéro de retard et la pénalité de TOUTES les soumissions tardives
+// de la saison, joueur par joueur, dans l'ordre des journées.
+async function recalculerPenalitesRetard() {
+  const offerts = CONFIG.regles.retardsSansPenalite || 0;
+  if (!confirm('Recalculer les pénalités de retard de toutes les journées ?\n'
+    + '• Les ' + offerts + ' premiers retards de chaque joueur : sans pénalité\n'
+    + '• À partir du ' + (offerts + 1) + 'e : ' + CONFIG.regles.penaliteRetard + ' pts\n\n'
+    + 'Des points déjà affichés peuvent changer.')) return;
+
+  const btn = document.getElementById('btn-recalc-retards');
+  const zone = document.getElementById('resultat-recalc-retards');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Recalcul en cours…'; }
+
+  try {
+    const compteur = {};
+    const modifs = [];
+    for (let j = 1; j <= CONFIG.nbJournees; j++) {
+      const ref = dbSaison('journees', `j${j}`);
+      const snap = await ref.get();
+      if (!snap.exists) continue;
+      const statuts = snap.data().statuts || {};
+      const nouveaux = { ...statuts };
+      let change = false;
+      Object.entries(statuts).forEach(([jid, st]) => {
+        if (!st?.tardif) return;
+        compteur[jid] = (compteur[jid] || 0) + 1;
+        const numero = compteur[jid];
+        const pen = penaliteDuRetard(numero);
+        if (st.numeroRetard !== numero || st.penalite !== pen) {
+          nouveaux[jid] = { ...st, numeroRetard: numero, penalite: pen };
+          change = true;
+          const nom = APP.joueurs.find(x => x.id === jid)?.nom || jid;
+          modifs.push('J' + j + ' · ' + nom + ' : retard n°' + numero + ' → ' + (pen ? pen + ' pts' : 'sans pénalité'));
+        }
+      });
+      if (change) await ref.set({ statuts: nouveaux }, { merge: true });
+    }
+    if (zone) {
+      zone.innerHTML = modifs.length
+        ? '<div class="text-sm" style="margin-bottom:10px;color:var(--vert)"><strong>' + modifs.length + ' soumission(s) mise(s) à jour :</strong><br>' + modifs.join('<br>') + '</div>'
+        : '<div class="text-sm text-muted" style="margin-bottom:10px">Rien à modifier : tout est déjà conforme à la règle.</div>';
+    }
+    showToast(modifs.length ? '✅ ' + modifs.length + ' pénalité(s) recalculée(s)' : 'Rien à modifier', 'success');
+  } catch (e) {
+    console.error('recalculerPenalitesRetard:', e);
+    showToast('Erreur : ' + (e.message || e), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔁 Recalculer les pénalités de retard'; }
+  }
+}
+
 // ── Rafraîchir les scores depuis ESPN ────────────────────────
 
 // ── Auto-refresh ESPN quand des matchs sont en cours ─────────
@@ -2701,45 +3008,32 @@ async function rafraichirScoresESPN(j, silencieux) {
     const data   = snap.data();
     const matchs = data.matchs || [];
 
-    // On cherche dans TOUT le calendrier ESPN de la saison (déjà mis en cache),
-    // plutôt qu'une fenêtre de dates étroite calculée à partir des horaires
-    // déjà stockés localement. Cette fenêtre pouvait être fausse si les
-    // horaires enregistrés étaient périmés (match reprogrammé par la TV,
-    // pas encore rafraîchi) — auquel cas la recherche par date ratait
-    // complètement les vrais matchs, même s'ils existaient bien sur ESPN.
-    // Fenêtre de dates calculée à partir des horaires stockés (rapide, cas normal)
+    // Fenêtre de dates calculée à partir des horaires stockés. L'API ESPN
+    // n'accepte plus les plages natives (HTTP 400) : fetchESPNEvenements les
+    // découpe en requêtes par jour. On ne regarde jamais plus loin que demain
+    // (un match qui n'a pas commencé n'a pas encore de score à récupérer).
+    const maintenant = Date.now();
     const timestamps = matchs.filter(m => m.timestamp).map(m => m.timestamp);
     let dateMin, dateMax;
     if (timestamps.length > 0) {
       dateMin = new Date(Math.min(...timestamps) - 86400000); // -1 jour
       dateMax = new Date(Math.max(...timestamps) + 86400000); // +1 jour
     } else {
-      dateMin = new Date(Date.now() - 86400000);
-      dateMax = new Date(Date.now() + 86400000);
+      dateMin = new Date(maintenant - 86400000);
+      dateMax = new Date(maintenant + 86400000);
     }
-    const fmt = d => d.toISOString().slice(0,10).replace(/-/g,'');
-    const url = 'https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard'
-              + '?dates=' + fmt(dateMin) + '-' + fmt(dateMax);
+    dateMax = new Date(Math.max(Math.min(dateMax.getTime(), maintenant + 86400000), dateMin.getTime()));
 
-    const resp   = await fetch(url);
-    const espnData = await resp.json();
-    let events = espnData.events || [];
+    let events = await fetchESPNEvenements(dateMin, dateMax);
 
     // Filet de sécurité : si la fenêtre calculée à partir des horaires stockés
     // ne renvoie RIEN, c'est probablement que ces horaires sont périmés (match
     // reprogrammé, pas encore rafraîchi). On retente alors avec une fenêtre
-    // large centrée sur AUJOURD'HUI plutôt que sur les horaires stockés — ça
-    // capture le match même si sa date enregistrée était fausse.
+    // centrée sur AUJOURD'HUI plutôt que sur les horaires stockés.
     if (events.length === 0) {
-      const dateMinAuj = new Date(Date.now() - 4 * 86400000);
-      const dateMaxAuj = new Date(Date.now() + 4 * 86400000);
-      const urlFallback = 'https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard'
-                + '?dates=' + fmt(dateMinAuj) + '-' + fmt(dateMaxAuj);
       try {
-        const respFallback = await fetch(urlFallback);
-        const espnDataFallback = await respFallback.json();
-        events = espnDataFallback.events || [];
-      } catch (eFallback) { /* on retombera sur le message d'erreur ci-dessous */ }
+        events = await fetchESPNEvenements(new Date(maintenant - 4 * 86400000), new Date(maintenant + 86400000));
+      } catch (eFallback) { /* on retombera sur le message ci-dessous */ }
     }
 
     if (events.length === 0) {
@@ -2989,89 +3283,78 @@ async function verifierMessageFinJournee() {
   let dernierVu = 0;
   try { dernierVu = parseInt(localStorage.getItem(cleStockage) || '0', 10) || 0; } catch(e) {}
 
-  // On cherche la DERNIÈRE journée déjà terminée, pas la première non vue :
-  // si plusieurs journées se sont enchaînées depuis la dernière ouverture de
-  // l'app, on ne remonte pas tout l'historique — un seul message, celui de
-  // la journée la plus récente. Les journées intermédiaires sont marquées
-  // vues silencieusement, sans jamais être affichées.
-  let j = dernierVu, data = null;
-  for (let candidat = dernierVu + 1; candidat <= CONFIG.nbJournees; candidat++) {
+  for (let j = dernierVu + 1; j <= CONFIG.nbJournees; j++) {
     let snap;
-    try { snap = await dbSaison('journees', `j${candidat}`).get(); }
-    catch(e) { break; }
-    if (!snap.exists) break; // journée pas encore créée : on s'arrête là
+    try { snap = await dbSaison('journees', `j${j}`).get(); }
+    catch(e) { return; }
+    if (!snap.exists) return; // journée pas encore créée : on s'arrête là
 
-    const d = snap.data();
-    const matchsCandidat = d.matchs || [];
-    const tousScoresCandidat = matchsCandidat.length > 0 && matchsCandidat.every(m => m.scoreReel !== null);
-    if (!tousScoresCandidat) break; // dès qu'une journée n'est pas finie, on arrête (ordre chronologique)
+    const data = snap.data();
+    const matchs = data.matchs || [];
+    const tousScores = matchs.length > 0 && matchs.every(m => m.scoreReel !== null);
+    if (!tousScores) return; // dès qu'une journée n'est pas finie, on arrête (ordre chronologique)
 
-    j = candidat;
-    data = d;
-  }
+    let soumissions = data.soumissions || {};
+    if (Object.keys(soumissions).length === 0) {
+      Object.keys(data).forEach(k => {
+        if (k.startsWith('soumissions.')) soumissions[k.replace('soumissions.','')] = data[k];
+      });
+    }
+    const statuts = data.statuts || {};
 
-  if (data === null || j <= dernierVu) return; // rien de nouveau à annoncer
-
-  const matchs = data.matchs || [];
-  let soumissions = data.soumissions || {};
-  if (Object.keys(soumissions).length === 0) {
-    Object.keys(data).forEach(k => {
-      if (k.startsWith('soumissions.')) soumissions[k.replace('soumissions.','')] = data[k];
+    // Reproduit exactement le calcul du classement journée (pénalité, joker, défaut, bonus)
+    const ptsJ = Object.fromEntries(APP.joueurs.map(jo => [jo.id,
+      matchs.reduce((acc, match, idx) => {
+        const p = soumissions[jo.id]?.[idx];
+        return acc + (p && match.scoreReel ? calculerPoints(p, match.scoreReel) || 0 : 0);
+      }, 0)]));
+    APP.joueurs.forEach(jo => {
+      const st = statuts[jo.id];
+      if (st?.tardif && st?.penalite) ptsJ[jo.id] = Math.max(0, ptsJ[jo.id] + st.penalite);
+      if (st?.joker === true) ptsJ[jo.id] = ptsJ[jo.id] * 2;
     });
-  }
-  const statuts = data.statuts || {};
+    const soumettants = Object.fromEntries(APP.joueurs.filter(jo => soumissions[jo.id]).map(jo => [jo.id, ptsJ[jo.id]]));
+    const def = calculerPointsDefaut(soumettants);
+    APP.joueurs.forEach(jo => { if (!soumissions[jo.id]) ptsJ[jo.id] = def; });
+    APP.joueurs.forEach(jo => {
+      const info = calculerBonusJournee(soumissions[jo.id], matchs);
+      if (info.bonusObtenu) ptsJ[jo.id] = (ptsJ[jo.id] || 0) + info.ptsBonus;
+    });
 
-  // Reproduit exactement le calcul du classement journée (pénalité, joker, défaut, bonus)
-  const ptsJ = Object.fromEntries(APP.joueurs.map(jo => [jo.id,
-    matchs.reduce((acc, match, idx) => {
-      const p = soumissions[jo.id]?.[idx];
-      return acc + (p && match.scoreReel ? calculerPoints(p, match.scoreReel) || 0 : 0);
-    }, 0)]));
-  APP.joueurs.forEach(jo => {
-    const st = statuts[jo.id];
-    if (st?.tardif && st?.penalite) ptsJ[jo.id] = Math.max(0, ptsJ[jo.id] + st.penalite);
-    if (st?.joker === true) ptsJ[jo.id] = ptsJ[jo.id] * 2;
-  });
-  const soumettants = Object.fromEntries(APP.joueurs.filter(jo => soumissions[jo.id]).map(jo => [jo.id, ptsJ[jo.id]]));
-  const def = calculerPointsDefaut(soumettants);
-  APP.joueurs.forEach(jo => { if (!soumissions[jo.id]) ptsJ[jo.id] = def; });
-  APP.joueurs.forEach(jo => {
-    const info = calculerBonusJournee(soumissions[jo.id], matchs);
-    if (info.bonusObtenu) ptsJ[jo.id] = (ptsJ[jo.id] || 0) + info.ptsBonus;
-  });
+    const sorted = APP.joueurs.slice().sort(comparerAvecDepartage(ptsJ, statuts));
+    // Même règle de rang que l'affichage à l'écran : à points égaux, même rang
+    // partagé (1, 2, 2, 4...) — sinon le message pouvait annoncer un rang
+    // différent de celui visible dans le classement en cas d'égalité de points.
+    let ptsPrecedentsMsg = -1, rangCourantMsg = 1, rang = 0;
+    sorted.forEach((jo, i) => {
+      const p = ptsJ[jo.id] || 0;
+      const r = (p !== ptsPrecedentsMsg) ? i + 1 : rangCourantMsg;
+      rangCourantMsg = r; ptsPrecedentsMsg = p;
+      if (jo.id === joueurId) rang = r;
+    });
+    const nbJoueurs = sorted.length;
 
-  const sorted = APP.joueurs.slice().sort(comparerAvecDepartage(ptsJ, statuts));
-  // Même règle de rang que l'affichage à l'écran : à points égaux, même rang
-  // partagé (1, 2, 2, 4...) — sinon le message pouvait annoncer un rang
-  // différent de celui visible dans le classement en cas d'égalité de points.
-  let ptsPrecedentsMsg = -1, rangCourantMsg = 1, rang = 0;
-  sorted.forEach((jo, i) => {
-    const p = ptsJ[jo.id] || 0;
-    const r = (p !== ptsPrecedentsMsg) ? i + 1 : rangCourantMsg;
-    rangCourantMsg = r; ptsPrecedentsMsg = p;
-    if (jo.id === joueurId) rang = r;
-  });
-  const nbJoueurs = sorted.length;
+    if (rang < 1) { // le joueur actif n'est pas dans APP.joueurs (admin sans profil) : rien à afficher
+      try { localStorage.setItem(cleStockage, String(j)); } catch(e) {}
+      continue;
+    }
 
-  if (rang < 1) { // le joueur actif n'est pas dans APP.joueurs (admin sans profil) : rien à afficher
+    let categorie;
+    if (rang === nbJoueurs)      categorie = 'dernier';
+    else if (rang === 1)         categorie = 'premier';
+    else if (rang === 2)         categorie = 'deuxieme';
+    else if (rang === nbJoueurs - 1) categorie = 'avantDernier';
+    else                          categorie = 'autres';
+
+    const messages = await recupererMessagesClassement();
+    const pool = (messages[categorie]?.length ? messages[categorie] : CONFIG.messagesClassementDefaut[categorie]);
+    const message = pool[Math.floor(Math.random() * pool.length)];
+
+    afficherModalFinJournee(j, rang, nbJoueurs, ptsJ[joueurId] || 0, message);
+
     try { localStorage.setItem(cleStockage, String(j)); } catch(e) {}
-    return;
+    return; // un seul message par ouverture d'app
   }
-
-  let categorie;
-  if (rang === nbJoueurs)      categorie = 'dernier';
-  else if (rang === 1)         categorie = 'premier';
-  else if (rang === 2)         categorie = 'deuxieme';
-  else if (rang === nbJoueurs - 1) categorie = 'avantDernier';
-  else                          categorie = 'autres';
-
-  const messages = await recupererMessagesClassement();
-  const pool = (messages[categorie]?.length ? messages[categorie] : CONFIG.messagesClassementDefaut[categorie]);
-  const message = pool[Math.floor(Math.random() * pool.length)];
-
-  afficherModalFinJournee(j, rang, nbJoueurs, ptsJ[joueurId] || 0, message);
-
-  try { localStorage.setItem(cleStockage, String(j)); } catch(e) {}
 }
 
 function afficherModalFinJournee(j, rang, nbJoueurs, pts, message) {

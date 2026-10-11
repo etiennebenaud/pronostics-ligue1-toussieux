@@ -13,17 +13,16 @@ const SPORTSDB_LEAGUE = 4334; // Ligue 1
 // J1 contient exactement les 18 équipes participantes
 async function fetchEquipesSaison(saisonKey) {
   try {
-    // On dérive la liste depuis TOUT le calendrier ESPN de la saison (déjà mis
-    // en cache), plutôt que la seule journée 1 via fetchJourneeAPI — celle-ci
-    // pouvait retomber sur TheSportsDB, connu pour renvoyer des journées
-    // incomplètes (parfois 5 matchs sur 9), d'où des équipes manquantes.
-    await chargerCacheESPN(saisonKey);
-    const tousLesMatchs = Object.values(window._espnCalCache?.journees || {}).flat();
-    if (tousLesMatchs.length === 0) return [];
-    const equipes = [...new Set([
-      ...tousLesMatchs.map(m => m.domicile),
-      ...tousLesMatchs.map(m => m.exterieur),
-    ])].filter(Boolean).sort();
+    // Les 18 équipes jouent chaque journée : août + septembre suffisent à les
+    // connaître toutes (requête légère, plutôt que de charger toute la saison).
+    const [anneeDebut] = saisonKey.split('-').map(s => s.slice(0,4));
+    const brut = await fetchESPNEvenements(
+      new Date(`${anneeDebut}-08-01T00:00:00Z`),
+      new Date(`${anneeDebut}-09-30T00:00:00Z`)
+    );
+    const equipes = [...new Set(brut.flatMap(ev =>
+      (ev.competitions?.[0]?.competitors || []).map(c => c.team?.displayName)
+    ))].filter(Boolean).sort();
     console.log(`Équipes ${saisonKey}:`, equipes.length, equipes);
     return equipes;
   } catch(e) {
@@ -106,19 +105,71 @@ async function fetchJourneeAPIEspn(numJournee, saisonLabel) {
   return (window._espnCalCache && window._espnCalCache.journees[numJournee]) || [];
 }
 
-// ── Cache ESPN : charge toute la saison en une requête ────────
+// ── ESPN : récupération d'événements sur une plage de dates ───────
+// L'API ESPN rejette désormais (HTTP 400) les plages "AAAAMMJJ-AAAAMMJJ",
+// y compris courtes. Elle accepte en revanche un JOUR ("AAAAMMJJ") ou un
+// MOIS ("AAAAMM"). On découpe donc nous-mêmes la plage demandée :
+//   - plage courte (≤ 8 jours) → une requête par jour (petites réponses)
+//   - plage longue             → une requête par mois (en parallèle)
+// Renvoie les événements bruts ESPN, dédoublonnés. Lève une erreur seulement
+// si TOUTES les requêtes échouent (un échec partiel est toléré).
+const ESPN_SCOREBOARD_URL = 'https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard';
+
+async function fetchESPNEvenements(dateDebut, dateFin) {
+  const debut = new Date(dateDebut), fin = new Date(dateFin);
+  if (isNaN(debut) || isNaN(fin) || fin < debut) return [];
+
+  const urls = [];
+  const nbJours = Math.floor((fin - debut) / 86400000) + 1;
+  const modeJour = nbJours <= 8;
+  if (modeJour) {
+    for (let i = 0; i < nbJours; i++) {
+      const d = new Date(debut.getTime() + i * 86400000);
+      urls.push(`${ESPN_SCOREBOARD_URL}?dates=${d.toISOString().slice(0, 10).replace(/-/g, '')}`);
+    }
+  } else {
+    const cur = new Date(Date.UTC(debut.getUTCFullYear(), debut.getUTCMonth(), 1));
+    while (cur <= fin) {
+      urls.push(`${ESPN_SCOREBOARD_URL}?dates=${cur.toISOString().slice(0, 7).replace('-', '')}&limit=500`);
+      cur.setUTCMonth(cur.getUTCMonth() + 1);
+    }
+  }
+
+  const reponses = await Promise.allSettled(urls.map(async u => {
+    const r = await fetch(u);
+    if (!r.ok) throw new Error('ESPN HTTP ' + r.status);
+    return (await r.json()).events || [];
+  }));
+  const reussies = reponses.filter(r => r.status === 'fulfilled');
+  if (reussies.length === 0) throw (reponses[0]?.reason || new Error('ESPN indisponible'));
+
+  const vus = new Set();
+  const events = [];
+  reussies.forEach(r => r.value.forEach(ev => {
+    if (vus.has(ev.id)) return;
+    vus.add(ev.id);
+    // En mode "mois", on ne garde que ce qui est dans la plage demandée
+    if (!modeJour) {
+      const t = new Date(ev.date).getTime();
+      if (t < debut.getTime() || t > fin.getTime() + 86400000) return;
+    }
+    events.push(ev);
+  }));
+  return events;
+}
+
+// ── Cache ESPN : charge toute la saison ───────────────────────
 async function chargerCacheESPN(saisonKey) {
   // Déduire les dates de la saison (format "2026-2027")
   const [anneeDebut, anneeFin] = saisonKey.split('-').map(s => s.slice(0,4));
-  const dateDebut = `${anneeDebut}0801`;
-  const dateFin   = `${anneeFin}0601`;
-  const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard?dates=${dateDebut}-${dateFin}&limit=500`;
 
   try {
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`ESPN HTTP ${resp.status}`);
-    const data = await resp.json();
-    const events = (data.events || []).sort((a, b) => a.date.localeCompare(b.date));
+    const brut = await fetchESPNEvenements(
+      new Date(`${anneeDebut}-08-01T00:00:00Z`),
+      new Date(`${anneeFin}-06-01T00:00:00Z`)
+    );
+    const events = brut.sort((a, b) => a.date.localeCompare(b.date));
+    if (events.length === 0) throw new Error('ESPN : aucun match renvoyé');
 
     // Grouper en journées par paquets de taille fixe (CONFIG.nbMatchsParJournee).
     // Plus robuste que l'ancienne heuristique "écart > 4 jours", qui fusionnait
@@ -134,12 +185,13 @@ async function chargerCacheESPN(saisonKey) {
     window._espnCalCache = { saison: saisonKey, journees };
     console.log(`Cache ESPN chargé : ${Object.keys(journees).length} journées`);
   } catch(e) {
+    // Échec : on ne mémorise SURTOUT PAS un cache vide (sinon plus aucune
+    // nouvelle tentative pendant toute la session) — le prochain appel retentera.
     console.warn('chargerCacheESPN:', e);
-    window._espnCalCache = { saison: saisonKey, journees: {} };
+    window._espnCalCache = null;
   }
 }
 
-// ── Convertir un event ESPN en format match Firebase ─────────
 function espnEventToMatch(ev) {
   const comp  = ev.competitions?.[0] || {};
   const teams = comp.competitors || [];
