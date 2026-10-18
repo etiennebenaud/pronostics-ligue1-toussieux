@@ -780,6 +780,17 @@ function renderGrille(j, data) {
   const mc = document.getElementById('grille-matchs');
   if (!mc) return;
   const nowGrille = Date.now();
+  // Une mise à jour temps réel du document (score en direct toutes les minutes,
+  // soumission d'un autre joueur...) reconstruit TOUS les champs de la grille et
+  // effaçait ce que le joueur était en train de saisir. On met donc de côté les
+  // champs éditables non vides (et le champ actif) pour les remettre juste après.
+  const saisieEnCours = {};
+  mc.querySelectorAll('.score-input:not([readonly])').forEach(inp => {
+    if (inp.value !== '') saisieEnCours[inp.id] = inp.value;
+  });
+  const idChampActif = (document.activeElement && mc.contains(document.activeElement))
+    ? document.activeElement.id : null;
+
   mc.innerHTML = matchs.map((match, idx) => {
     const sr = match.scoreReel || null;
     const pts = (prono, reel) => reel ? calculerPoints(prono, reel) : null;
@@ -840,6 +851,14 @@ function renderGrille(j, data) {
         <span class="team-name ext">${match.exterieur||`Éq.${idx+1}E`}</span>
       </div>${inputs}${autres}</div>`;
   }).join('');
+
+  // Remettre la saisie en cours — jamais par-dessus une valeur déjà enregistrée
+  // ni dans un champ devenu verrouillé (match commencé, journée soumise...).
+  Object.entries(saisieEnCours).forEach(([id, v]) => {
+    const el = document.getElementById(id);
+    if (el && !el.readOnly && el.value === '') el.value = v;
+  });
+  if (idChampActif) document.getElementById(idChampActif)?.focus();
 
   const bc = document.getElementById('btn-soumettre-container');
   if (!bc) return;
