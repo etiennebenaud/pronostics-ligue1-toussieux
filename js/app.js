@@ -705,6 +705,23 @@ function calculerPointsDefaut(totauxSoumettants) {
 }
 
 // ── Vérifier si un match est déjà joué (basé sur timestamp) ──
+// ── État d'un match d'après les données enregistrées ────────────
+//  'termine'  : score FINAL enregistré (ESPN une fois le match fini, ou saisie admin)
+//  'en_cours' : score en direct (scoreEnCours), ou match commencé dont le score n'a
+//               pas encore été récupéré (dans les 3 h qui suivent le coup d'envoi)
+//  null       : match pas encore commencé (ou état inconnu)
+// Un match EN COURS a déjà un score (provisoire) : « avoir un score » ne suffit donc
+// pas à dire qu'un match est terminé.
+function etatMatch(m) {
+  if (!m) return null;
+  if (m.scoreReel && m.scoreEnCours !== true) return 'termine';
+  if (m.scoreEnCours === true) return 'en_cours';
+  const t = m.timestamp, now = Date.now();
+  if (t && now >= t && now < t + 3 * 3600000) return 'en_cours';
+  return null;
+}
+function matchTermine(m) { return etatMatch(m) === 'termine'; }
+
 function matchDejaJoue(match) {
   if (!match.timestamp) return false;
   return Date.now() > match.timestamp;
@@ -1281,9 +1298,15 @@ function renderResultats(j, data) {
     }
 
     const bgCellMatch = idx % 2 === 0 ? '#fff' : 'var(--color-background-secondary)';
+    const etatDuMatch = etatMatch(match);
+    const statutHtml = etatDuMatch === 'termine'
+      ? '<span class="statut-match statut-termine">✓ Terminé</span>'
+      : etatDuMatch === 'en_cours'
+        ? '<span class="statut-match statut-encours"><span class="pastille-live"></span>En cours</span>'
+        : '';
     htmlFrozen += `<tr ${bgRow}>
       <td class="match-col" style="font-size:11px;background:${bgCellMatch}">
-        ${nomCourtEquipe(match.domicile)} - ${nomCourtEquipe(match.exterieur)}
+        ${nomCourtEquipe(match.domicile)} - ${nomCourtEquipe(match.exterieur)}${statutHtml}
       </td>
       <td class="score-cell" style="white-space:nowrap;background:${bgCellMatch}">${scoreHtml}</td>
     </tr>`;
@@ -3292,9 +3315,11 @@ async function sauverMessagesClassement() {
 }
 
 // ── Détection et affichage du message de fin de journée ─────────
-// Parcourt les journées dans l'ordre à partir de la dernière déjà vue par
-// CE joueur (mémorisé en local) ; s'arrête à la première journée pas encore
-// terminée (tousScores). N'affiche qu'un seul message par ouverture d'app.
+// Une journée est « terminée » quand TOUS ses matchs ont un score FINAL : un match
+// en direct (score provisoire) ne compte pas. On cherche la DERNIÈRE journée
+// terminée depuis la dernière annonce vue par ce joueur (mémorisée en local) :
+// un seul message, celui de la journée la plus récente ; les journées
+// intermédiaires sont considérées comme vues, sans jamais être affichées.
 async function verifierMessageFinJournee() {
   if (!APP.joueurActif || !APP.db) return;
   const joueurId = APP.joueurActif.id;
@@ -3302,78 +3327,82 @@ async function verifierMessageFinJournee() {
   let dernierVu = 0;
   try { dernierVu = parseInt(localStorage.getItem(cleStockage) || '0', 10) || 0; } catch(e) {}
 
-  for (let j = dernierVu + 1; j <= CONFIG.nbJournees; j++) {
+  let j = dernierVu, data = null;
+  for (let candidat = dernierVu + 1; candidat <= CONFIG.nbJournees; candidat++) {
     let snap;
-    try { snap = await dbSaison('journees', `j${j}`).get(); }
-    catch(e) { return; }
-    if (!snap.exists) return; // journée pas encore créée : on s'arrête là
+    try { snap = await dbSaison('journees', `j${candidat}`).get(); }
+    catch(e) { break; }
+    if (!snap.exists) break; // journée pas encore créée : on s'arrête là
 
-    const data = snap.data();
-    const matchs = data.matchs || [];
-    const tousScores = matchs.length > 0 && matchs.every(m => m.scoreReel !== null);
-    if (!tousScores) return; // dès qu'une journée n'est pas finie, on arrête (ordre chronologique)
+    const d = snap.data();
+    const matchsCandidat = d.matchs || [];
+    // Pas terminée tant qu'un match est en cours, pas commencé, ou sans score final
+    if (!(matchsCandidat.length > 0 && matchsCandidat.every(matchTermine))) break;
 
-    let soumissions = data.soumissions || {};
-    if (Object.keys(soumissions).length === 0) {
-      Object.keys(data).forEach(k => {
-        if (k.startsWith('soumissions.')) soumissions[k.replace('soumissions.','')] = data[k];
-      });
-    }
-    const statuts = data.statuts || {};
-
-    // Reproduit exactement le calcul du classement journée (pénalité, joker, défaut, bonus)
-    const ptsJ = Object.fromEntries(APP.joueurs.map(jo => [jo.id,
-      matchs.reduce((acc, match, idx) => {
-        const p = soumissions[jo.id]?.[idx];
-        return acc + (p && match.scoreReel ? calculerPoints(p, match.scoreReel) || 0 : 0);
-      }, 0)]));
-    APP.joueurs.forEach(jo => {
-      const st = statuts[jo.id];
-      if (st?.tardif && st?.penalite) ptsJ[jo.id] = Math.max(0, ptsJ[jo.id] + st.penalite);
-      if (st?.joker === true) ptsJ[jo.id] = ptsJ[jo.id] * 2;
-    });
-    const soumettants = Object.fromEntries(APP.joueurs.filter(jo => soumissions[jo.id]).map(jo => [jo.id, ptsJ[jo.id]]));
-    const def = calculerPointsDefaut(soumettants);
-    APP.joueurs.forEach(jo => { if (!soumissions[jo.id]) ptsJ[jo.id] = def; });
-    APP.joueurs.forEach(jo => {
-      const info = calculerBonusJournee(soumissions[jo.id], matchs);
-      if (info.bonusObtenu) ptsJ[jo.id] = (ptsJ[jo.id] || 0) + info.ptsBonus;
-    });
-
-    const sorted = APP.joueurs.slice().sort(comparerAvecDepartage(ptsJ, statuts));
-    // Même règle de rang que l'affichage à l'écran : à points égaux, même rang
-    // partagé (1, 2, 2, 4...) — sinon le message pouvait annoncer un rang
-    // différent de celui visible dans le classement en cas d'égalité de points.
-    let ptsPrecedentsMsg = -1, rangCourantMsg = 1, rang = 0;
-    sorted.forEach((jo, i) => {
-      const p = ptsJ[jo.id] || 0;
-      const r = (p !== ptsPrecedentsMsg) ? i + 1 : rangCourantMsg;
-      rangCourantMsg = r; ptsPrecedentsMsg = p;
-      if (jo.id === joueurId) rang = r;
-    });
-    const nbJoueurs = sorted.length;
-
-    if (rang < 1) { // le joueur actif n'est pas dans APP.joueurs (admin sans profil) : rien à afficher
-      try { localStorage.setItem(cleStockage, String(j)); } catch(e) {}
-      continue;
-    }
-
-    let categorie;
-    if (rang === nbJoueurs)      categorie = 'dernier';
-    else if (rang === 1)         categorie = 'premier';
-    else if (rang === 2)         categorie = 'deuxieme';
-    else if (rang === nbJoueurs - 1) categorie = 'avantDernier';
-    else                          categorie = 'autres';
-
-    const messages = await recupererMessagesClassement();
-    const pool = (messages[categorie]?.length ? messages[categorie] : CONFIG.messagesClassementDefaut[categorie]);
-    const message = pool[Math.floor(Math.random() * pool.length)];
-
-    afficherModalFinJournee(j, rang, nbJoueurs, ptsJ[joueurId] || 0, message);
-
-    try { localStorage.setItem(cleStockage, String(j)); } catch(e) {}
-    return; // un seul message par ouverture d'app
+    j = candidat;
+    data = d;
   }
+  if (data === null || j <= dernierVu) return; // rien de nouveau à annoncer
+
+  const matchs = data.matchs || [];
+  let soumissions = data.soumissions || {};
+  if (Object.keys(soumissions).length === 0) {
+    Object.keys(data).forEach(k => {
+      if (k.startsWith('soumissions.')) soumissions[k.replace('soumissions.','')] = data[k];
+    });
+  }
+  const statuts = data.statuts || {};
+
+  // Reproduit exactement le calcul du classement journée (pénalité, joker, défaut, bonus)
+  const ptsJ = Object.fromEntries(APP.joueurs.map(jo => [jo.id,
+    matchs.reduce((acc, match, idx) => {
+      const p = soumissions[jo.id]?.[idx];
+      return acc + (p && match.scoreReel ? calculerPoints(p, match.scoreReel) || 0 : 0);
+    }, 0)]));
+  APP.joueurs.forEach(jo => {
+    const st = statuts[jo.id];
+    if (st?.tardif && st?.penalite) ptsJ[jo.id] = Math.max(0, ptsJ[jo.id] + st.penalite);
+    if (st?.joker === true) ptsJ[jo.id] = ptsJ[jo.id] * 2;
+  });
+  const soumettants = Object.fromEntries(APP.joueurs.filter(jo => soumissions[jo.id]).map(jo => [jo.id, ptsJ[jo.id]]));
+  const def = calculerPointsDefaut(soumettants);
+  APP.joueurs.forEach(jo => { if (!soumissions[jo.id]) ptsJ[jo.id] = def; });
+  APP.joueurs.forEach(jo => {
+    const info = calculerBonusJournee(soumissions[jo.id], matchs);
+    if (info.bonusObtenu) ptsJ[jo.id] = (ptsJ[jo.id] || 0) + info.ptsBonus;
+  });
+
+  const sorted = APP.joueurs.slice().sort(comparerAvecDepartage(ptsJ, statuts));
+  // Même règle de rang que l'affichage à l'écran : à points égaux, même rang
+  // partagé (1, 2, 2, 4...).
+  let ptsPrecedentsMsg = -1, rangCourantMsg = 1, rang = 0;
+  sorted.forEach((jo, i) => {
+    const p = ptsJ[jo.id] || 0;
+    const r = (p !== ptsPrecedentsMsg) ? i + 1 : rangCourantMsg;
+    rangCourantMsg = r; ptsPrecedentsMsg = p;
+    if (jo.id === joueurId) rang = r;
+  });
+  const nbJoueurs = sorted.length;
+
+  if (rang < 1) { // le joueur actif n'est pas dans APP.joueurs (admin sans profil) : rien à afficher
+    try { localStorage.setItem(cleStockage, String(j)); } catch(e) {}
+    return;
+  }
+
+  let categorie;
+  if (rang === nbJoueurs)          categorie = 'dernier';
+  else if (rang === 1)             categorie = 'premier';
+  else if (rang === 2)             categorie = 'deuxieme';
+  else if (rang === nbJoueurs - 1) categorie = 'avantDernier';
+  else                             categorie = 'autres';
+
+  const messages = await recupererMessagesClassement();
+  const pool = (messages[categorie]?.length ? messages[categorie] : CONFIG.messagesClassementDefaut[categorie]);
+  const message = pool[Math.floor(Math.random() * pool.length)];
+
+  afficherModalFinJournee(j, rang, nbJoueurs, ptsJ[joueurId] || 0, message);
+
+  try { localStorage.setItem(cleStockage, String(j)); } catch(e) {}
 }
 
 function afficherModalFinJournee(j, rang, nbJoueurs, pts, message) {
