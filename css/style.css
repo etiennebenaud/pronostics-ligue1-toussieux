@@ -831,3 +831,14 @@ body {
 .resultats-table td.bt-cell.bt-ok     { background: var(--vert-l) !important; color: var(--vert); font-weight: 800; }
 .resultats-table td.bt-cell.bt-proche { background: var(--or-l) !important; color: #7A5400; }
 .resultats-table td.bt-cell.bt-vide   { color: var(--gris-l); font-weight: 400; }
+
+/* ── Statut du match (En cours / Terminé) sous l'affiche, dans l'onglet Résultats ── */
+.statut-match { display: block; font-size: 9px; font-weight: 600; letter-spacing: .2px; margin-top: 1px; line-height: 1.2; }
+.statut-termine { color: var(--vert); }
+.statut-encours { color: var(--rouge); }
+.pastille-live {
+  display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--rouge); margin-right: 3px; vertical-align: 1px;
+  animation: pulseStatutLive 1.4s ease-in-out infinite;
+}
+@keyframes pulseStatutLive { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
